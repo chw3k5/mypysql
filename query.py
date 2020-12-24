@@ -236,7 +236,8 @@ class QueryEngine:
             conditions_query_str += F"""ON temp.{user_table_name}.spexodisks_handle = """
             conditions_query_str += F"""spexodisks.{table_name}.spexodisks_handle """
         else:
-            conditions_query_str += F"""WHERE """
+            if table_added_conditions:
+                conditions_query_str += F"""WHERE """
         is_first_condition = True
         for table_name in table_added_conditions.keys():
             for condition in table_added_conditions[table_name]:
@@ -246,7 +247,9 @@ class QueryEngine:
                     is_first_condition = False
                 else:
                     conditions_query_str += single_condition
-        raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str + ";")
+        else:
+            conditions_query_str += ";"
+        raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str)
         formatted_sql_output = format_output(unformatted_output=raw_sql_output)
         return formatted_sql_output
 
@@ -382,13 +385,3 @@ if __name__ == "__main__":
         plt.xlabel(F"{x_param.upper()} ({x_units})")
         plt.ylabel(F"{y_param.upper()} ({y_units})")
         plt.show()
-
-
-
-
-
-
-
-
-
-
