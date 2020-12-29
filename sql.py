@@ -1,17 +1,15 @@
 import os
 import secrets
 import string
-import time
 from datetime import datetime
-import functools
 from numpy import float32, float64
 import mysql.connector
-
-# Avoid a requirement to have created a SQL config file created to run the rest of the project
-try:
-    from mypysql.sql_config import sql_host, sql_user, sql_database, sql_password, sql_port
-except ModuleNotFoundError:
-    ql_host, sql_user, sql_database, sql_password, sql_port = "", "", "", "", 3306
+from mypysql.sql_config import sql_host, sql_user, sql_database, sql_password, sql_port
+# # Avoid a requirement to have created a SQL config file created to run the rest of the project
+# try:
+#     from mypysql.sql_config import sql_host, sql_user, sql_database, sql_password, sql_port
+# except ModuleNotFoundError:
+#     ql_host, sql_user, sql_database, sql_password, sql_port = "", "", "", "", 3306
 
 # quickly change the lengths of some MySQL columns
 max_star_name_size = 50
@@ -199,29 +197,6 @@ dynamically_named_tables = {"spectrum": "(`wavelength_um` " + float_param +
                             }
 
 
-def timer(func):
-    @functools.wraps(func)
-    def wrapper_timer(*args, **kwargs):
-        tic = time.perf_counter()
-        value = func(*args, **kwargs)
-        toc = time.perf_counter()
-        elapsed_time = toc - tic
-        print(f"Elapsed time: {elapsed_time:0.4f} seconds for {func.__name__}")
-        return value
-    return
-
-
-def close_on_error(func):
-    @functools.wraps(func)
-    def close_on_error(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except:
-            args[0].close()
-            raise
-    return
-
-
 def make_insert_columns_str(table_name, columns, database):
     insert_str = F"INSERT INTO {database}.{table_name}("
     columns_str = ""
@@ -264,7 +239,7 @@ def insert_into_table_str(table_name, data, database=None):
 
 def generate_sql_config_file(user_name, password):
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    config_file_name = os.path.join(dir_path, F'{user_name}_sql_config.py')
+    config_file_name = os.path.join(dir_path, 'new_configs', 'sql_config.py')
     with open(config_file_name, 'w') as f:
         f.write(F"""sql_host = "{sql_host}"\n""")
         f.write(F"""sql_port = "{sql_port}"\n""")
@@ -315,7 +290,6 @@ class OutputSQL:
     def open_if_closed(self):
         if self.connection is None:
             self.open()
-
 
     def new_user(self, user_name, password=None):
         if password is None:
@@ -460,11 +434,23 @@ class OutputSQL:
                                         FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'spectra';""")
         self.connection.commit()
 
+    def handles_table(self):
+        table_name = "handles"
+        self.prep_table_ops(table=F"{table_name}")
+        self.cursor.execute(F"""CREATE TABLE spexodisks.{table_name}
+                                SELECT spexodisks.spectra.spectrum_handle, spexodisks.spectra.spexodisks_handle,
+                                spexodisks.stars.pop_name, spexodisks.stars.preferred_simbad_name
+                                FROM spexodisks.spectra JOIN spexodisks.stars 
+                                ON spexodisks.spectra.spexodisks_handle = spexodisks.stars.spexodisks_handle;""")
+        self.cursor.execute(F"""ALTER TABLE spexodisks.{table_name}
+                                ADD PRIMARY KEY (spectrum_handle);""")
+        self.connection.commit()
+
 
 if __name__ == "__main__":
     output_sql = OutputSQL()
     try:
-        output_sql.make_new_dba_user(user_name="caleb")
+        output_sql.handles_table()
     except:
         output_sql.close()
         raise
