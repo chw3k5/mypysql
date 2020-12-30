@@ -264,11 +264,11 @@ class QueryEngine:
         return formatted_sql_output
 
     def data_type_to_table_location(self, data_type):
-        if data_type in self.params_str:
+        if data_type in self.params_str or "str" in data_type:
             return "object_params_str"
-        elif data_type in self.params_float:
+        elif data_type in self.params_float or "float" in data_type:
             return "object_params_float"
-        elif data_type in self.params_spectrum:
+        elif data_type in self.params_spectrum or "spectrum" in data_type:
             return "spectra"
         else:
             raise KeyError(F"Data type {data_type} is not valid.")
@@ -276,6 +276,7 @@ class QueryEngine:
     def query_table(self, parsed_query):
         parameters_by_table = {"spectra": set(), "object_params_str": set(), "object_params_float": set()}
         for outer_join_data_type in parsed_query.data_types:
+
             table_location = self.data_type_to_table_location(outer_join_data_type)
             parameters_by_table[table_location].add((F"spexodisks.{table_location}", outer_join_data_type))
 
@@ -293,7 +294,7 @@ class QueryEngine:
                                                                   start_parentheses=condition.start_parentheses,
                                                                   end_parentheses=condition.end_parentheses))
         # initialize
-        table_param_alias = []
+        table_param_alias = {}
         join_clauses = []
         where_clauses = []
         counter = 1
@@ -305,7 +306,7 @@ class QueryEngine:
         # tables that are joined for the required return data
         for table_name, data_type in sorted(parameters_by_table["object_params_float"]):
             alias = F"param_type_{counter}"
-            table_param_alias.append((alias, table_name))
+            table_param_alias[(data_type, table_name)] = alias
             table_str += F'''{alias}.float_param_type AS 'param_{counter}', '''
             table_str += F'''{alias}.float_value AS 'value_{counter}', '''
             table_str += F'''{alias}.float_error_low AS 'error_low_{counter}', '''
@@ -319,7 +320,7 @@ class QueryEngine:
 
         for table_name, data_type in sorted(parameters_by_table["object_params_str"]):
             alias = F"param_type_{counter}"
-            table_param_alias.append((alias, table_name))
+            table_param_alias[(data_type, table_name)] = alias
             table_str += F'''{alias}.str_param_type AS 'param_{counter}', '''
             table_str += F'''{alias}.str_value AS 'value_{counter}', '''
             table_str += F'''{alias}.str_error AS 'error_low_{counter}', '''
@@ -333,7 +334,7 @@ class QueryEngine:
 
         for table_name, data_type in sorted(parameters_by_table["spectra"]):
             alias = F"param_type_{counter}"
-            table_param_alias.append((alias, table_name))
+            table_param_alias[(data_type, table_name)] = alias
             table_str += F'''{alias}.{data_type} AS 'param_{counter}', '''
             table_str += F'''{alias}.{data_type} AS 'value_{counter}', '''
             table_str += F'''"NULL" AS 'error_low_{counter}', '''
@@ -347,6 +348,25 @@ class QueryEngine:
         table_str = table_str[:-2] + F''' FROM spexodisks.handles AS `h`'''
         for join_clause in join_clauses:
             table_str += str(join_clause)
+
+        # sort out which conditions do not need new table joins
+        conditions_that_need_joins = []
+        aliased_conditions = []
+        for condition in table_added_conditions:
+            test_key = (condition.target_type, condition.table_name)
+            if test_key in table_param_alias.keys():
+                alias = table_param_alias[test_key]
+                aliased_conditions.append(Condition(logic_prefix=condition.logic_prefix,
+                                                                      target_type=condition.target_type,
+                                                                      comparator=condition.comparator,
+                                                                      target_value=condition.target_value,
+                                                                      table_name=alias,
+                                                                      start_parentheses=condition.start_parentheses,
+                                                                      end_parentheses=condition.end_parentheses))
+            else:
+                conditions_that_need_joins.append(condition)
+
+       # Test Here      
 
         # tables that must be joined because of conditions
 
@@ -488,13 +508,13 @@ if __name__ == "__main__":
     #                            "and|  |float_value      |<|5000   |)),"
     #                            "and| (|spectrum_set_type|=|creres |  ,"
     #                            "or |  |spectrum_set_type|=|nirspec|)  ")
-    test7 = qe.query(query_str="3,spectrum_min_wavelength_um,dist,rings")  # ,"
-    #                            "and|((|float_param_type |=|teff   |  ,"
-    #                            "and|  |float_value      |>|4000   |) ,"
-    #                            "and| (|float_param_type |=|teff   |  ,"
-    #                            "and|  |float_value      |<|5000   |)),"
-    #                            "and| (|spectrum_set_type|=|creres |  ,"
-    #                            "or |  |spectrum_set_type|=|nirspec|)  ")
+    test7 = qe.query(query_str="3,spectrum_min_wavelength_um,teff,rings,"
+                               "and|((|float_param_type |=|teff   |  ,"
+                               "and|  |float_value      |>|4000   |) ,"
+                               "and| (|float_param_type |=|teff   |  ,"
+                               "and|  |float_value      |<|5000   |)),"
+                               "and| (|spectrum_set_type|=|creres |  ,"
+                               "or |  |spectrum_set_type|=|nirspec|)  ")
 
     for a_test in [test7]:  # test1, test2, test3, test4, test5, test6]:
         fig, ax = plt.subplots()
