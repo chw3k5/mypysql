@@ -345,68 +345,53 @@ class QueryEngine:
                                 F'''h.spectrum_handle = {alias}.spectrum_handle ''')
             counter += 1
 
-        table_str = table_str[:-2] + F''' FROM spexodisks.handles AS `h`'''
+        table_str = table_str[:-2] + F''' FROM spexodisks.handles AS `h` '''
         for join_clause in join_clauses:
             table_str += str(join_clause)
 
-        # sort out which conditions do not need new table joins
-        conditions_that_need_joins = []
-        aliased_conditions = []
-        for condition in table_added_conditions:
-            test_key = (condition.target_type, condition.table_name)
-            if test_key in table_param_alias.keys():
-                alias = table_param_alias[test_key]
-                aliased_conditions.append(Condition(logic_prefix=condition.logic_prefix,
-                                                                      target_type=condition.target_type,
-                                                                      comparator=condition.comparator,
-                                                                      target_value=condition.target_value,
-                                                                      table_name=alias,
-                                                                      start_parentheses=condition.start_parentheses,
-                                                                      end_parentheses=condition.end_parentheses))
+        # Make inner joins and where statements
+        conditions_where_clauses = []
+        for main_table_type in sorted(table_added_conditions.keys()):
+            alias = F"param_type_{counter}"
+            table_str += F'''INNER JOIN spexodisks.{main_table_type} AS `{alias}` ON '''
+            if main_table_type == "spectra":
+                table_str += F'''h.spectrum_handle = {alias}.spectrum_handle '''
             else:
-                conditions_that_need_joins.append(condition)
+                table_str += F'''h.spexodisks_handle = {alias}.spexodisks_handle '''
+            counter += 1
+            for condition in table_added_conditions[main_table_type]:
+                conditions_where_clauses.append(Condition(logic_prefix=condition.logic_prefix,
+                                                                  target_type=condition.target_type,
+                                                                  comparator=condition.comparator,
+                                                                  target_value=condition.target_value,
+                                                                  table_name=F"{alias}",
+                                                                  start_parentheses=condition.start_parentheses,
+                                                                  end_parentheses=condition.end_parentheses))
 
-       # Test Here      
 
-        # tables that must be joined because of conditions
-
-        if any([where_clauses != []]):
+        if any([where_clauses != [], conditions_where_clauses != []]):
             table_str += F'''WHERE '''
+            is_first_condition = True
             # required to join the tables
             if where_clauses:
                 table_str += F'''('''
             for where_clause in where_clauses:
+                is_first_condition = False
                 table_str += F'''{where_clause} AND '''
             if where_clauses:
                 table_str = table_str[:-5] + F''') '''
             # conditions that act on returned data
+            if conditions_where_clauses:
+                for condition in conditions_where_clauses:
+                    single_condition = F"""{condition} """
+                    if is_first_condition:
+                        table_str += single_condition.replace("AND ", "")
+                        is_first_condition = False
+                    else:
+                        table_str += single_condition
 
-            # conditions that filter based on data that is not returned
-
-        user_table_name = self.output_sql.user_table(table_str=table_str)
-
-        conditions_query_str = F"""SELECT DISTINCT temp.{user_table_name}.spexodisks_handle, param_x, value_x, error_low_x, error_high_x, """
-        conditions_query_str += F"""ref_x, units_x, param_y, value_y, error_low_y, error_high_y, ref_y, units_y """
-        conditions_query_str += F"""FROM temp.{user_table_name} """
-
-        for table_name in table_added_conditions.keys():
-            conditions_query_str += F"""INNER JOIN spexodisks.{table_name} """
-            conditions_query_str += F"""ON temp.{user_table_name}.spexodisks_handle = """
-            conditions_query_str += F"""spexodisks.{table_name}.spexodisks_handle """
-        else:
-            conditions_query_str += F"""WHERE """
-        is_first_condition = True
-        for table_name in table_added_conditions.keys():
-            for condition in table_added_conditions[table_name]:
-                single_condition = F"""{condition} """
-                if is_first_condition:
-                    conditions_query_str += single_condition.replace("AND ", "")
-                    is_first_condition = False
-                else:
-                    conditions_query_str += single_condition
-        raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str + ";")
-        formatted_sql_output = format_output(unformatted_output=raw_sql_output)
-        return formatted_sql_output
+        table_str += ";"
+        return self.output_sql.query(sql_query_str=table_str)
 
     def query(self, query_str):
         parsed_query = parse_query_str(query_str=query_str)
