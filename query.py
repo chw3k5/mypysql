@@ -1,6 +1,7 @@
 from typing import NamedTuple, Union, Optional
 from mypysql.sql import OutputSQL
 from operator import attrgetter,itemgetter
+from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -112,26 +113,75 @@ def parse_query_str(query_str):
         raise KeyError(F"Query type {query_type} is not valid.")
 
 
+links_to_data = {"_param", "_value", "_errorlow", "_errorhigh", "_ref", "_units"}
+
+
 def format_output(unformatted_output, header="spexodisks_handle,param_x,value_x,error_low_x,error_high_x,ref_x," +
-                                             "units_x,param_y,value_y,error_low_y,error_high_y,ref_y,units_y"):
+                                             "units_x,param_y,value_y,error_low_y,error_high_y,ref_y,units_y",
+                  prime_key="spexodisks_handle"):
+
+    header = header.split(',')
+    # Data columns have a mapping, name_columns have no extra mapping, here we determine the mapping and keep the order
     handle_dict = {}
+    name_columns = []
+    data_columns = []
+    data_columns_set = set()
+    data_column_map = {}
+    for column_name in header:
+        name_column_type = True
+        for data_link in links_to_data:
+            if data_link in column_name:
+                name_column_type = False
+                prime_data_type = column_name.replace(data_link, "")
+                data_column_map[column_name] = (prime_data_type, data_link.replace("_", ""))
+                if prime_data_type not in data_columns_set:
+                    data_columns_set.add(prime_data_type)
+                    data_columns.append(prime_data_type)
+        if name_column_type:
+            name_columns.append(column_name)
+    # we now know the shape of the output, we will initial that form here
+    formatted_columns = name_columns + data_columns
+    blank_output = tuple([set() for _ in range(len(name_columns) + len(data_columns))])
+
+
+    # Now we start on the raw sql data
     for output_row in unformatted_output:
-        row_dict = {key.strip().lower(): num_format(value) for key, value in zip(header.split(','), output_row)}
-        spexodisks_handle = row_dict["spexodisks_handle"]
-        if spexodisks_handle not in handle_dict.keys():
-            handle_dict[spexodisks_handle] = (set(), set())
-        x_params = SingleParam(value=row_dict["value_x"], param=row_dict["param_x"],
-                               err=(row_dict["error_low_x"], row_dict["error_high_x"]),
-                               ref=row_dict["ref_x"], units=row_dict["units_x"])
-        handle_dict[spexodisks_handle][0].add(x_params)
-        y_params = SingleParam(value=row_dict["value_y"], param=row_dict["param_y"],
-                               err=(row_dict["error_low_y"], row_dict["error_high_y"]),
-                               ref=row_dict["ref_y"], units=row_dict["units_y"])
-        handle_dict[spexodisks_handle][1].add(y_params)
+        # initialize and do a little formatting of the raw data values
+        row_dict = {key.strip().lower(): num_format(value) for key, value in zip(header, output_row)}
+        prime_key_this_row = row_dict[prime_key]
+        if prime_key_this_row not in handle_dict.keys():
+            handle_dict[prime_key_this_row] = deepcopy(blank_output)
+        # fold the data in the right shape for the output
+        folded_row_dict = {}
+        for column_name in header:
+            if column_name in data_column_map.keys():
+                prime_data_type, data_link = data_column_map[column_name]
+                if prime_data_type not in folded_row_dict.keys():
+                    folded_row_dict[prime_data_type] = {}
+                folded_row_dict[prime_data_type][data_link] = row_dict[column_name]
+            else:
+                folded_row_dict[column_name] = row_dict[column_name]
+        # now the folded data is into a special tuple
+        for column_index, output_column in list(enumerate(formatted_columns)):
+            if output_column in data_columns_set:
+                datum_dict = folded_row_dict[output_column]
+                formatted_datum = SingleParam(value=datum_dict["value"], param=datum_dict["param"],
+                                              err=(datum_dict["errorlow"], datum_dict["errorhigh"]),
+                                              ref=datum_dict["ref"], units=datum_dict["units"])
+            else:
+                formatted_datum = folded_row_dict[output_column]
+            # this is the final fold of the data, by adding it to a set we only save unique data
+            handle_dict[prime_key_this_row][column_index].add(formatted_datum)
+    # While not required, here we turn things into ordered lists. This is good for delivering uniform results
     output = []
-    for key in sorted(handle_dict.keys()):
-        x_set, y_set = handle_dict[key]
-        output.append((key, sorted(x_set, key=attrgetter("value")), sorted(y_set, key=attrgetter("value"))))
+    for prime_key in sorted(handle_dict.keys()):
+        temp_data_holder = [prime_key]
+        for column_index, output_column in list(enumerate(formatted_columns)):
+            if output_column in data_columns_set:
+                temp_data_holder.append(sorted(handle_dict[prime_key][column_index], key=attrgetter("value")))
+            else:
+                temp_data_holder.append(sorted(handle_dict[prime_key][column_index]))
+        output.append(tuple(temp_data_holder))
     return output
 
 
@@ -276,7 +326,6 @@ class QueryEngine:
     def query_table(self, parsed_query):
         parameters_by_table = {"spectra": set(), "object_params_str": set(), "object_params_float": set()}
         for outer_join_data_type in parsed_query.data_types:
-
             table_location = self.data_type_to_table_location(outer_join_data_type)
             parameters_by_table[table_location].add((F"spexodisks.{table_location}", outer_join_data_type))
 
@@ -302,9 +351,12 @@ class QueryEngine:
                     'h.spexodisks_handle,  ' +\
                     'h.pop_name, ' +\
                     'h.preferred_simbad_name, '
+        output_header = 'spectrum_handle,spexodisks_handle,pop_name,preferred_simbad_name,'
         ### Data that will be returned
         # tables that are joined for the required return data
         for table_name, data_type in sorted(parameters_by_table["object_params_float"]):
+            output_header += F"{data_type}_param,{data_type}_value,{data_type}_errorlow,{data_type}_errorhigh,"
+            output_header += F"{data_type}_ref,{data_type}_units,"
             alias = F"param_type_{counter}"
             table_param_alias[(data_type, table_name)] = alias
             table_str += F'''{alias}.float_param_type AS 'param_{counter}', '''
@@ -319,6 +371,8 @@ class QueryEngine:
             counter += 1
 
         for table_name, data_type in sorted(parameters_by_table["object_params_str"]):
+            output_header += F"{data_type}_param,{data_type}_value,{data_type}_errorlow,{data_type}_errorhigh,"
+            output_header += F"{data_type}_ref,{data_type}_units,"
             alias = F"param_type_{counter}"
             table_param_alias[(data_type, table_name)] = alias
             table_str += F'''{alias}.str_param_type AS 'param_{counter}', '''
@@ -333,6 +387,8 @@ class QueryEngine:
             counter += 1
 
         for table_name, data_type in sorted(parameters_by_table["spectra"]):
+            output_header += F"{data_type}_param,{data_type}_value,{data_type}_errorlow,{data_type}_errorhigh,"
+            output_header += F"{data_type}_ref,{data_type}_units,"
             alias = F"param_type_{counter}"
             table_param_alias[(data_type, table_name)] = alias
             table_str += F'''{alias}.{data_type} AS 'param_{counter}', '''
@@ -344,7 +400,8 @@ class QueryEngine:
             join_clauses.append(F'''LEFT OUTER JOIN {table_name} AS `{alias}` ON ''' +
                                 F'''h.spectrum_handle = {alias}.spectrum_handle ''')
             counter += 1
-
+        # trim the last comma from output_header
+        output_header = output_header[:-1]
         table_str = table_str[:-2] + F''' FROM spexodisks.handles AS `h` '''
         for join_clause in join_clauses:
             table_str += str(join_clause)
@@ -391,7 +448,9 @@ class QueryEngine:
                         table_str += single_condition
 
         table_str += ";"
-        return self.output_sql.query(sql_query_str=table_str)
+        raw_sql_output = self.output_sql.query(sql_query_str=table_str)
+        formatted_output = format_output(unformatted_output=raw_sql_output, header=output_header)
+        return formatted_output
 
     def query(self, query_str):
         parsed_query = parse_query_str(query_str=query_str)
@@ -501,38 +560,38 @@ if __name__ == "__main__":
                                "and| (|spectrum_set_type|=|creres |  ,"
                                "or |  |spectrum_set_type|=|nirspec|)  ")
 
-    for a_test in [test7]:  # test1, test2, test3, test4, test5, test6]:
-        fig, ax = plt.subplots()
-        x_param, y_param, x_units, y_units = None, None, None, None
-        for spexodisks_handle, x_data_list, y_data_list in a_test:
-            mean_x = np.mean([x_data.value for x_data in x_data_list])
-            mean_y = np.mean([y_data.value for y_data in y_data_list])
-            coordinate_pairs_this_object = {}
-            for x_data in x_data_list:
-                for y_data in y_data_list:
-                    r, phi = local_polar_coordinates(x=x_data.value, y=y_data.value, x_offset=mean_x, y_offset=mean_y)
-                    coordinate_pairs_this_object[(r, phi)] = (x_data, y_data)
-                    if x_param is None:
-                        x_param = x_data.param
-                    if y_param is None:
-                        y_param = y_data.param
-                    if x_units is None:
-                        x_units = x_data.units
-                    if y_units is None:
-                        y_units = y_data.units
-            plot_coordinate_pairs = sorted(coordinate_pairs_this_object.keys(), key=itemgetter(1, 0))
-            if len(plot_coordinate_pairs) > 2:
-                plot_coordinate_pairs.append(plot_coordinate_pairs[0])
-            x = []
-            y = []
-            for pair in plot_coordinate_pairs:
-                x_data, y_data = coordinate_pairs_this_object[pair]
-                x.append(x_data.value)
-                y.append(y_data.value)
-            plt.plot(x, y)
-        plt.title(F"{len(a_test)} objects plotted")
-        plt.xlabel(F"{x_param.upper()} ({x_units})")
-        plt.ylabel(F"{y_param.upper()} ({y_units})")
-        plt.show()
+    # for a_test in [test7]:  # test1, test2, test3, test4, test5, test6]:
+    #     fig, ax = plt.subplots()
+    #     x_param, y_param, x_units, y_units = None, None, None, None
+    #     for spexodisks_handle, x_data_list, y_data_list in a_test:
+    #         mean_x = np.mean([x_data.value for x_data in x_data_list])
+    #         mean_y = np.mean([y_data.value for y_data in y_data_list])
+    #         coordinate_pairs_this_object = {}
+    #         for x_data in x_data_list:
+    #             for y_data in y_data_list:
+    #                 r, phi = local_polar_coordinates(x=x_data.value, y=y_data.value, x_offset=mean_x, y_offset=mean_y)
+    #                 coordinate_pairs_this_object[(r, phi)] = (x_data, y_data)
+    #                 if x_param is None:
+    #                     x_param = x_data.param
+    #                 if y_param is None:
+    #                     y_param = y_data.param
+    #                 if x_units is None:
+    #                     x_units = x_data.units
+    #                 if y_units is None:
+    #                     y_units = y_data.units
+    #         plot_coordinate_pairs = sorted(coordinate_pairs_this_object.keys(), key=itemgetter(1, 0))
+    #         if len(plot_coordinate_pairs) > 2:
+    #             plot_coordinate_pairs.append(plot_coordinate_pairs[0])
+    #         x = []
+    #         y = []
+    #         for pair in plot_coordinate_pairs:
+    #             x_data, y_data = coordinate_pairs_this_object[pair]
+    #             x.append(x_data.value)
+    #             y.append(y_data.value)
+    #         plt.plot(x, y)
+    #     plt.title(F"{len(a_test)} objects plotted")
+    #     plt.xlabel(F"{x_param.upper()} ({x_units})")
+    #     plt.ylabel(F"{y_param.upper()} ({y_units})")
+    #     plt.show()
 
 
