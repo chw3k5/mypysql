@@ -389,11 +389,16 @@ class OutputSQL:
         self.cursor.execute(F"""USE {database};""")
         self.cursor.execute(F"""DROP TABLE IF EXISTS `{table}`;""")
 
-    def user_table(self, table_str):
-        user_table_name = F"user_table_{'%04i' % self.next_user_table_number}"
-        self.next_user_table_number += 1
-        self.prep_table_ops(table=user_table_name, database='temp')
-        self.cursor.execute(F"""CREATE TABLE `{user_table_name}` {table_str}""")
+    def user_table(self, table_str, user_table_name=None, skip_if_exists=True):
+        if user_table_name is None:
+            user_table_name = F"user_table_{'%04i' % self.next_user_table_number}"
+            self.next_user_table_number += 1
+        if skip_if_exists:
+            self.cursor.execute(F"""USE temp;""")
+        else:
+            self.prep_table_ops(table=user_table_name, database='temp')
+        create_str = F"""CREATE TABLE IF NOT EXISTS `{user_table_name}` {table_str};"""
+        self.cursor.execute(create_str)
         self.connection.commit()
         return user_table_name
 

@@ -96,24 +96,63 @@ def parse_conditions(raw_conditions):
 
 
 def parse_query_str(query_str):
-    query_type, *query_details = query_str.split(",")
-    try:
-        num_of_plot_columns = int(query_type)
-        query_type = "table"
-    except ValueError:
-        num_of_plot_columns = None
-    if query_type == "table" and num_of_plot_columns is not None:
-        data_types, conditions = query_details[:num_of_plot_columns], query_details[num_of_plot_columns:]
+    query_type, num_of_param, *query_details = query_str.split(",")
+    num_of_param = int(num_of_param)
+    if query_type in {"plot", "table"}:
+        if len(query_details) < num_of_param:
+            data_types, conditions = query_details, []
+        else:
+            data_types, conditions = query_details[:num_of_param], query_details[num_of_param:]
         return TableQuery(query_type=query_type, data_types=data_types, conditions=parse_conditions(conditions))
-    elif query_type == "xy_plot":
-        x_type, y_type, *conditions = query_details
-        return XYQuery(query_type=query_type.strip(), x_type=x_type.strip(), y_type=y_type.strip(),
-                       conditions=parse_conditions(conditions))
     else:
         raise KeyError(F"Query type {query_type} is not valid.")
 
 
 links_to_data = {"_param", "_value", "_errorlow", "_errorhigh", "_ref", "_units"}
+
+
+def sql_columns_str(table_type, parameter_list, table_param_alias, table_str, output_header,
+                    join_clauses, where_clauses, counter, prime_key, join_type="INNER"):
+    # tables that are joined for the required return data
+    for table_name, data_type in parameter_list:
+        if table_type == "spectra":
+            prime_key = 'spectrum_handle'
+        output_header += F"{data_type}_param,{data_type}_value,{data_type}_errorlow,{data_type}_errorhigh,"
+        output_header += F"{data_type}_ref,{data_type}_units,"
+        alias = F"param_type_{counter}"
+        table_param_alias[(data_type, table_name)] = alias
+        if table_type == "object_params_float":
+            table_str += F'''{alias}.float_param_type AS 'param_{counter}', '''
+            table_str += F'''{alias}.float_value AS 'value_{counter}', '''
+            table_str += F'''{alias}.float_error_low AS 'error_low_{counter}', '''
+            table_str += F'''{alias}.float_error_high AS 'error_high_{counter}', '''
+            table_str += F'''{alias}.float_ref AS 'ref_{counter}', '''
+            table_str += F'''{alias}.float_units AS 'units_{counter}', '''
+            join_clauses.append(F'''{join_type} JOIN {table_name} AS `{alias}` ON ''' +
+                                F'''h.spexodisks_handle = {alias}.spexodisks_handle ''')
+            where_clauses.append(F'''{alias}.float_param_type = "{data_type}"''')
+        if table_type == "object_params_str":
+            table_str += F'''{alias}.str_param_type AS 'param_{counter}', '''
+            table_str += F'''{alias}.str_value AS 'value_{counter}', '''
+            table_str += F'''{alias}.str_error AS 'error_low_{counter}', '''
+            table_str += F'''{alias}.str_error AS 'error_high_{counter}', '''
+            table_str += F'''{alias}.str_ref AS 'ref_{counter}', '''
+            table_str += F'''{alias}.str_units AS 'units_{counter}', '''
+            join_clauses.append(F'''{join_type} JOIN {table_name} AS `{alias}` ON ''' +
+                                F'''h.spexodisks_handle = {alias}.spexodisks_handle ''')
+            where_clauses.append(F'''{alias}.str_param_type = "{data_type}"''')
+        if table_type == "spectra":
+            table_str += F'''{alias}.{data_type} AS 'param_{counter}', '''
+            table_str += F'''{alias}.{data_type} AS 'value_{counter}', '''
+            table_str += F'''"NULL" AS 'error_low_{counter}', '''
+            table_str += F'''"NULL" AS 'error_high_{counter}', '''
+            table_str += F'''{alias}.spectrum_reference AS 'ref_{counter}', '''
+            table_str += F'''"NULL"  AS 'units_{counter}', '''
+            join_clauses.append(F'''{join_type} JOIN {table_name} AS `{alias}` ON ''' +
+                                F'''h.spectrum_handle = {alias}.spectrum_handle ''')
+            prime_key = 'spectrum_handle'
+        counter += 1
+    return table_param_alias, table_str, output_header, join_clauses, where_clauses, counter, prime_key
 
 
 def format_output(unformatted_output, header="spexodisks_handle,param_x,value_x,error_low_x,error_high_x,ref_x," +
@@ -142,7 +181,6 @@ def format_output(unformatted_output, header="spexodisks_handle,param_x,value_x,
     # we now know the shape of the output, we will initial that form here
     formatted_columns = name_columns + data_columns
     blank_output = tuple([set() for _ in range(len(name_columns) + len(data_columns))])
-
 
     # Now we start on the raw sql data
     for output_row in unformatted_output:
@@ -220,85 +258,31 @@ class QueryEngine:
         else:
             raise KeyError
 
-    def query_xy_plot(self, parsed_query):
-        required_tables = set()
-        # figure out what tables the x_type and y_type belong to.
-        if parsed_query.x_type in self.params_float:
-            x_table = "object_params_float"
-        elif parsed_query.x_type in self.params_spectrum_float:
-            x_table = "spectra"
-        else:
-            raise KeyError(F"Data type {parsed_query.x_type} is not valid for the query_xy_plot.")
-        required_tables.add(x_table)
-        if parsed_query.y_type in self.params_float:
-            y_table = "object_params_float"
-        elif parsed_query.y_type in self.params_spectrum_float:
-            y_table = "spectra"
-        else:
-            raise KeyError(F"Data type {parsed_query.y_type} is not valid for the query_xy_plot.")
-        required_tables.add(y_table)
+    def query_plot(self, parsed_query):
+        table_str, output_header, table_added_conditions, where_clauses, counter, prime_key = \
+            self.base_query(parsed_query=parsed_query, join_type="INNER")
+        if where_clauses:
+            table_str += F'''WHERE '''
+            table_str += F'''('''
+        for where_clause in where_clauses:
+            table_str += F'''{where_clause} AND '''
+        if where_clauses:
+            table_str = table_str[:-5] + F''') '''
+        table_name = ""
+        for name in sorted(parsed_query.data_types):
+            table_name += name
 
-        # find out what tables the conditions reference
-        table_added_conditions = {}
-        for condition in parsed_query.conditions:
-            target_table = self.property_to_table(condition.target_type)
-            if target_table not in table_added_conditions.keys():
-                table_added_conditions[target_table] = []
-            table_added_conditions[target_table].append(Condition(logic_prefix=condition.logic_prefix,
-                                                                  target_type=condition.target_type,
-                                                                  comparator=condition.comparator,
-                                                                  target_value=condition.target_value,
-                                                                  table_name=F"spexodisks.{target_table}",
-                                                                  start_parentheses=condition.start_parentheses,
-                                                                  end_parentheses=condition.end_parentheses))
-            required_tables.add(target_table)
-        # Join the tables the contain the x and y data sets
-        if x_table == "object_params_float":
-            param_x, value_x, error_low_x = "x_table.float_param_type", "x_table.float_value", "x_table.float_error_low"
-            error_high_x, ref_x, units_x = "x_table.float_error_high", "x_table.float_ref", "x_table.float_units"
-        elif x_table == "spectra":
-            param_x, value_x, error_low_x = F"'{parsed_query.x_type}'", F"x_table.{parsed_query.x_type}", "NULL"
-            error_high_x, ref_x, units_x = "NULL", "x_table.spectrum_reference", "NULL"
-        else:
-            raise KeyError
-        if y_table == "object_params_float":
-            param_y, value_y, error_low_y = "y_table.float_param_type", "y_table.float_value", "y_table.float_error_low"
-            error_high_y, ref_y, units_y = "y_table.float_error_high", "y_table.float_ref", "y_table.float_units"
-        elif y_table == "spectra":
-            param_y, value_y, error_low_y = F"'{parsed_query.y_type}'", F"y_table.{parsed_query.y_type}", "NULL"
-            error_high_y, ref_y, units_y = "NULL", "y_table.spectrum_reference", "NULL"
-        else:
-            raise KeyError
+        user_table_name = self.output_sql.user_table(table_str=table_str, user_table_name=table_name)
 
-        table_str = F"""SELECT DISTINCT x_table.spexodisks_handle,
-                               {param_x} AS 'param_x', 
-                               {value_x} AS 'value_x', 
-                               {error_low_x}  AS 'error_low_x', 
-                               {error_high_x} AS 'error_high_x', 
-                               {ref_x} AS 'ref_x', 
-                               {units_x} AS 'units_x',
-                               {param_y} AS 'param_y', 
-                               {value_y} AS 'value_y', 
-                               {error_low_y} AS 'error_low_y', 
-                               {error_high_y} AS 'error_high_y',
-                               {ref_y} AS 'ref_y', 
-                               {units_y} AS units_y
-                         FROM spexodisks.{x_table} AS x_table
-                            INNER JOIN spexodisks.{y_table} AS y_table
-                                ON x_table.spexodisks_handle = y_table.spexodisks_handle
-                         WHERE ({param_x} = "{parsed_query.x_type}"
-                            AND {param_y} = "{parsed_query.y_type}");"""
-        user_table_name = self.output_sql.user_table(table_str=table_str)
-
-        conditions_query_str = F"""SELECT DISTINCT temp.{user_table_name}.spexodisks_handle, param_x, value_x, error_low_x, error_high_x, """
-        conditions_query_str += F"""ref_x, units_x, param_y, value_y, error_low_y, error_high_y, ref_y, units_y """
+        conditions_query_str = F"""SELECT DISTINCT * """
         conditions_query_str += F"""FROM temp.{user_table_name} """
 
         for table_name in table_added_conditions.keys():
             conditions_query_str += F"""INNER JOIN spexodisks.{table_name} """
             conditions_query_str += F"""ON temp.{user_table_name}.spexodisks_handle = """
             conditions_query_str += F"""spexodisks.{table_name}.spexodisks_handle """
-        else:
+
+        if table_added_conditions:
             conditions_query_str += F"""WHERE """
         is_first_condition = True
         for table_name in table_added_conditions.keys():
@@ -310,7 +294,8 @@ class QueryEngine:
                 else:
                     conditions_query_str += single_condition
         raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str + ";")
-        formatted_sql_output = format_output(unformatted_output=raw_sql_output)
+        formatted_sql_output = format_output(unformatted_output=raw_sql_output, header=output_header,
+                                             prime_key=prime_key)
         return formatted_sql_output
 
     def data_type_to_table_location(self, data_type):
@@ -323,7 +308,7 @@ class QueryEngine:
         else:
             raise KeyError(F"Data type {data_type} is not valid.")
 
-    def query_table(self, parsed_query):
+    def base_query(self, parsed_query, join_type="LEFT OUTER"):
         parameters_by_table = {"spectra": set(), "object_params_str": set(), "object_params_float": set()}
         for outer_join_data_type in parsed_query.data_types:
             table_location = self.data_type_to_table_location(outer_join_data_type)
@@ -343,6 +328,7 @@ class QueryEngine:
                                                                   start_parentheses=condition.start_parentheses,
                                                                   end_parentheses=condition.end_parentheses))
         # initialize
+        prime_key = 'spexodisks_handle'
         table_param_alias = {}
         join_clauses = []
         where_clauses = []
@@ -352,60 +338,22 @@ class QueryEngine:
                     'h.pop_name, ' +\
                     'h.preferred_simbad_name, '
         output_header = 'spectrum_handle,spexodisks_handle,pop_name,preferred_simbad_name,'
-        ### Data that will be returned
-        # tables that are joined for the required return data
-        for table_name, data_type in sorted(parameters_by_table["object_params_float"]):
-            output_header += F"{data_type}_param,{data_type}_value,{data_type}_errorlow,{data_type}_errorhigh,"
-            output_header += F"{data_type}_ref,{data_type}_units,"
-            alias = F"param_type_{counter}"
-            table_param_alias[(data_type, table_name)] = alias
-            table_str += F'''{alias}.float_param_type AS 'param_{counter}', '''
-            table_str += F'''{alias}.float_value AS 'value_{counter}', '''
-            table_str += F'''{alias}.float_error_low AS 'error_low_{counter}', '''
-            table_str += F'''{alias}.float_error_high AS 'error_high_{counter}', '''
-            table_str += F'''{alias}.float_ref AS 'ref_{counter}', '''
-            table_str += F'''{alias}.float_units AS 'units_{counter}', '''
-            join_clauses.append(F'''LEFT OUTER JOIN {table_name} AS `{alias}` ON ''' +
-                                F'''h.spexodisks_handle = {alias}.spexodisks_handle ''')
-            where_clauses.append(F'''{alias}.float_param_type = "{data_type}"''')
-            counter += 1
-
-        for table_name, data_type in sorted(parameters_by_table["object_params_str"]):
-            output_header += F"{data_type}_param,{data_type}_value,{data_type}_errorlow,{data_type}_errorhigh,"
-            output_header += F"{data_type}_ref,{data_type}_units,"
-            alias = F"param_type_{counter}"
-            table_param_alias[(data_type, table_name)] = alias
-            table_str += F'''{alias}.str_param_type AS 'param_{counter}', '''
-            table_str += F'''{alias}.str_value AS 'value_{counter}', '''
-            table_str += F'''{alias}.str_error AS 'error_low_{counter}', '''
-            table_str += F'''{alias}.str_error AS 'error_high_{counter}', '''
-            table_str += F'''{alias}.str_ref AS 'ref_{counter}', '''
-            table_str += F'''{alias}.str_units AS 'units_{counter}', '''
-            join_clauses.append(F'''LEFT OUTER JOIN {table_name} AS `{alias}` ON ''' +
-                                F'''h.spexodisks_handle = {alias}.spexodisks_handle ''')
-            where_clauses.append(F'''{alias}.str_param_type = "{data_type}"''')
-            counter += 1
-
-        for table_name, data_type in sorted(parameters_by_table["spectra"]):
-            output_header += F"{data_type}_param,{data_type}_value,{data_type}_errorlow,{data_type}_errorhigh,"
-            output_header += F"{data_type}_ref,{data_type}_units,"
-            alias = F"param_type_{counter}"
-            table_param_alias[(data_type, table_name)] = alias
-            table_str += F'''{alias}.{data_type} AS 'param_{counter}', '''
-            table_str += F'''{alias}.{data_type} AS 'value_{counter}', '''
-            table_str += F'''"NULL" AS 'error_low_{counter}', '''
-            table_str += F'''"NULL" AS 'error_high_{counter}', '''
-            table_str += F'''{alias}.spectrum_reference AS 'ref_{counter}', '''
-            table_str += F'''"NULL"  AS 'units_{counter}', '''
-            join_clauses.append(F'''LEFT OUTER JOIN {table_name} AS `{alias}` ON ''' +
-                                F'''h.spectrum_handle = {alias}.spectrum_handle ''')
-            counter += 1
-        # trim the last comma from output_header
+        # make the strings for the SQL query
+        for table_type in sorted(parameters_by_table.keys()):
+            parameter_list = sorted(parameters_by_table[table_type])
+            table_param_alias, table_str, output_header, join_clauses, where_clauses, counter, prime_key = \
+                sql_columns_str(table_type, parameter_list, table_param_alias, table_str, output_header,
+                                join_clauses, where_clauses, counter, prime_key, join_type=join_type)
+        # Clean up and add join clauses to the table str
         output_header = output_header[:-1]
         table_str = table_str[:-2] + F''' FROM spexodisks.handles AS `h` '''
         for join_clause in join_clauses:
             table_str += str(join_clause)
+        return table_str, output_header, table_added_conditions, where_clauses, counter, prime_key
 
+    def query_table(self, parsed_query, join_type="LEFT OUTER"):
+        table_str, output_header, table_added_conditions, where_clauses, counter, prime_key = \
+            self.base_query(parsed_query=parsed_query, join_type=join_type)
         # Make inner joins and where statements
         conditions_where_clauses = []
         for main_table_type in sorted(table_added_conditions.keys()):
@@ -449,13 +397,13 @@ class QueryEngine:
 
         table_str += ";"
         raw_sql_output = self.output_sql.query(sql_query_str=table_str)
-        formatted_output = format_output(unformatted_output=raw_sql_output, header=output_header)
+        formatted_output = format_output(unformatted_output=raw_sql_output, header=output_header, prime_key=prime_key)
         return formatted_output
 
     def query(self, query_str):
         parsed_query = parse_query_str(query_str=query_str)
-        if parsed_query.query_type == "xy_plot":
-            return self.query_xy_plot(parsed_query=parsed_query)
+        if parsed_query.query_type == "plot":
+            return self.query_plot(parsed_query=parsed_query)
         elif parsed_query.query_type == "table":
             return self.query_table(parsed_query=parsed_query)
         else:
@@ -530,29 +478,29 @@ if __name__ == "__main__":
     """
 
     qe = QueryEngine()
-    # test1 = qe.query(query_str="xy_plot,teff,dist")
-    # test2 = qe.query(query_str="xy_plot,mass,spectrum_resolution_um")
-    # test3 = qe.query(query_str="xy_plot,spectrum_min_wavelength_um,spectrum_max_wavelength_um")
-    #
-    # test4 = qe.query(query_str="xy_plot,mass,dist,"
-    #                            "and|((|float_param_type|=|teff|  ,"
-    #                            "and|  |float_value     |>|4000|) ,"
-    #                            "and| (|float_param_type|=|teff|  ,"
-    #                            "and|  |float_value     |<|5000|))")
-    # test5 = qe.query(query_str="xy_plot,spectrum_min_wavelength_um,dist,"
-    #                            "and|((|float_param_type|=|teff|  ,"
-    #                            "and|  |float_value     |>|4000|) ,"
-    #                            "and| (|float_param_type|=|teff|  ,"
-    #                            "and|  |float_value     |<|5000|))")
-    #
-    # test6 = qe.query(query_str="xy_plot,spectrum_min_wavelength_um,dist,"
-    #                            "and|((|float_param_type |=|teff   |  ,"
-    #                            "and|  |float_value      |>|4000   |) ,"
-    #                            "and| (|float_param_type |=|teff   |  ,"
-    #                            "and|  |float_value      |<|5000   |)),"
-    #                            "and| (|spectrum_set_type|=|creres |  ,"
-    #                            "or |  |spectrum_set_type|=|nirspec|)  ")
-    test7 = qe.query(query_str="3,spectrum_min_wavelength_um,teff,rings,"
+    test1 = qe.query(query_str="plot,2,teff,dist")
+    test2 = qe.query(query_str="plot,2,mass,spectrum_resolution_um")
+    test3 = qe.query(query_str="plot,2,spectrum_min_wavelength_um,spectrum_max_wavelength_um")
+
+    test4 = qe.query(query_str="plot,2,mass,dist,"
+                               "and|((|float_param_type|=|teff|  ,"
+                               "and|  |float_value     |>|4000|) ,"
+                               "and| (|float_param_type|=|teff|  ,"
+                               "and|  |float_value     |<|5000|))")
+    test5 = qe.query(query_str="plot,2,spectrum_min_wavelength_um,dist,"
+                               "and|((|float_param_type|=|teff|  ,"
+                               "and|  |float_value     |>|4000|) ,"
+                               "and| (|float_param_type|=|teff|  ,"
+                               "and|  |float_value     |<|5000|))")
+
+    test6 = qe.query(query_str="plot,2,spectrum_min_wavelength_um,dist,"
+                               "and|((|float_param_type |=|teff   |  ,"
+                               "and|  |float_value      |>|4000   |) ,"
+                               "and| (|float_param_type |=|teff   |  ,"
+                               "and|  |float_value      |<|5000   |)),"
+                               "and| (|spectrum_set_type|=|creres |  ,"
+                               "or |  |spectrum_set_type|=|nirspec|)  ")
+    test7 = qe.query(query_str="table,4,spectrum_min_wavelength_um,teff,rings,dist,"
                                "and|((|float_param_type |=|teff   |  ,"
                                "and|  |float_value      |>|4000   |) ,"
                                "and| (|float_param_type |=|teff   |  ,"
@@ -560,7 +508,7 @@ if __name__ == "__main__":
                                "and| (|spectrum_set_type|=|creres |  ,"
                                "or |  |spectrum_set_type|=|nirspec|)  ")
 
-    # for a_test in [test7]:  # test1, test2, test3, test4, test5, test6]:
+    # for a_test in test1, test2, test3, test4, test5, test6]:
     #     fig, ax = plt.subplots()
     #     x_param, y_param, x_units, y_units = None, None, None, None
     #     for spexodisks_handle, x_data_list, y_data_list in a_test:
