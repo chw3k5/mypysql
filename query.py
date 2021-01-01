@@ -3,6 +3,8 @@ from mypysql.sql import OutputSQL
 from operator import attrgetter,itemgetter
 from copy import deepcopy
 import numpy as np
+from collections import deque
+import time
 import matplotlib.pyplot as plt
 
 
@@ -224,6 +226,8 @@ def format_output(unformatted_output, header="spexodisks_handle,param_x,value_x,
 
 
 class QueryEngine:
+    query_log = deque(maxlen=int(1e4))
+
     def __init__(self):
         self.output_sql = OutputSQL()
         self.params_str = {item[0] for item in
@@ -259,6 +263,7 @@ class QueryEngine:
             raise KeyError
 
     def query_plot(self, parsed_query):
+        start_time = time.perf_counter()
         table_str, output_header, table_added_conditions, where_clauses, counter, prime_key = \
             self.base_query(parsed_query=parsed_query, join_type="INNER")
         if where_clauses:
@@ -293,9 +298,12 @@ class QueryEngine:
                     is_first_condition = False
                 else:
                     conditions_query_str += single_condition
-        raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str + ";")
+        conditions_query_str += ";"
+        raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str)
         formatted_sql_output = format_output(unformatted_output=raw_sql_output, header=output_header,
                                              prime_key=prime_key)
+        end_time = time.perf_counter()
+        self.query_log.append(F"plot|{end_time - start_time}|{conditions_query_str}")
         return formatted_sql_output
 
     def data_type_to_table_location(self, data_type):
@@ -352,6 +360,7 @@ class QueryEngine:
         return table_str, output_header, table_added_conditions, where_clauses, counter, prime_key
 
     def query_table(self, parsed_query, join_type="LEFT OUTER"):
+        start_time = time.perf_counter()
         table_str, output_header, table_added_conditions, where_clauses, counter, prime_key = \
             self.base_query(parsed_query=parsed_query, join_type=join_type)
         # Make inner joins and where statements
@@ -398,6 +407,8 @@ class QueryEngine:
         table_str += ";"
         raw_sql_output = self.output_sql.query(sql_query_str=table_str)
         formatted_output = format_output(unformatted_output=raw_sql_output, header=output_header, prime_key=prime_key)
+        end_time = time.perf_counter()
+        self.query_log.append(F"table|{end_time - start_time}|{table_str}")
         return formatted_output
 
     def query(self, query_str):
@@ -478,9 +489,10 @@ if __name__ == "__main__":
     """
 
     qe = QueryEngine()
+    qe2 = QueryEngine()
     test1 = qe.query(query_str="plot,2,teff,dist")
-    test2 = qe.query(query_str="plot,2,mass,spectrum_resolution_um")
-    test3 = qe.query(query_str="plot,2,spectrum_min_wavelength_um,spectrum_max_wavelength_um")
+    test2 = qe2.query(query_str="plot,2,mass,spectrum_resolution_um")
+    test3 = qe2.query(query_str="plot,2,spectrum_min_wavelength_um,spectrum_max_wavelength_um")
 
     test4 = qe.query(query_str="plot,2,mass,dist,"
                                "and|((|float_param_type|=|teff|  ,"
@@ -500,7 +512,7 @@ if __name__ == "__main__":
                                "and|  |float_value      |<|5000   |)),"
                                "and| (|spectrum_set_type|=|creres |  ,"
                                "or |  |spectrum_set_type|=|nirspec|)  ")
-    test7 = qe.query(query_str="table,4,spectrum_min_wavelength_um,teff,rings,dist,"
+    test7 = qe2.query(query_str="table,4,spectrum_min_wavelength_um,teff,rings,dist,"
                                "and|((|float_param_type |=|teff   |  ,"
                                "and|  |float_value      |>|4000   |) ,"
                                "and| (|float_param_type |=|teff   |  ,"
