@@ -1,11 +1,9 @@
 from typing import NamedTuple, Union, Optional
 from mypysql.sql import OutputSQL
-from operator import attrgetter,itemgetter
+from operator import attrgetter
 from copy import deepcopy
-import numpy as np
 from collections import deque
 import time
-import matplotlib.pyplot as plt
 
 
 def is_num(test_str):
@@ -30,19 +28,12 @@ def num_format(a_string):
             return a_string
 
 
-def local_polar_coordinates(x, y, x_offset, y_offset):
-    x_local = x - x_offset
-    y_local = y - y_offset
-    r = np.sqrt((x_local**2.0) + (y_local**2.0))
-    phi = np.arctan2(x_local, y_local)
-    return r, phi
-
-
 class XYQuery(NamedTuple):
     query_type: str
     x_type: str
     y_type: str
     conditions: list
+
 
 class TableQuery(NamedTuple):
     query_type: str
@@ -98,9 +89,16 @@ def parse_conditions(raw_conditions):
 
 
 def parse_query_str(query_str):
+    # This is the most base rule of the query parser
+    # Only query_type and num_of_params need to have values, query_details is a list that is allowed to be empty
     query_type, num_of_param, *query_details = query_str.split(",")
+    # expected to be all lowercase letter
+    query_type = query_type.lower()
+    # expected to be an int
     num_of_param = int(num_of_param)
-    if query_type in {"plot", "table"}:
+    # Error here is the query_type is not expected
+    if query_type in {"plot", "table", "plot!", "table!"}:
+        # Additional qualifications can be added here to broaden the types of queries handled.
         if len(query_details) < num_of_param:
             data_types, conditions = query_details, []
         else:
@@ -115,7 +113,26 @@ links_to_data = {"_param", "_value", "_errorlow", "_errorhigh", "_ref", "_units"
 
 def sql_columns_str(table_type, parameter_list, table_param_alias, table_str, output_header,
                     join_clauses, where_clauses, counter, prime_key, join_type="INNER"):
-    # tables that are joined for the required return data
+    """
+    An abstracted MySQL String Query. This is a fundamental tool in to join parameters tables in the spexodisks database
+    This abstraction handles the messy parts joining an arbitrary number of parameter types together, while maintaining
+    a standard output format.
+
+    Many of the input and output variables are the same, as this function is meant to run inside a loop where these
+    variables are iteratively updated.
+
+    :param table_type:
+    :param parameter_list:
+    :param table_param_alias:
+    :param table_str:
+    :param output_header:
+    :param join_clauses:
+    :param where_clauses:
+    :param counter:
+    :param prime_key:
+    :param join_type:
+    :return:
+    """
     for table_name, data_type in parameter_list:
         if table_type == "spectra":
             prime_key = 'spectrum_handle'
@@ -144,7 +161,7 @@ def sql_columns_str(table_type, parameter_list, table_param_alias, table_str, ou
                                 F'''h.spexodisks_handle = {alias}.spexodisks_handle ''')
             where_clauses.append(F'''{alias}.str_param_type = "{data_type}"''')
         if table_type == "spectra":
-            table_str += F'''{alias}.{data_type} AS 'param_{counter}', '''
+            table_str += F'''"{data_type}" AS 'param_{counter}', '''
             table_str += F'''{alias}.{data_type} AS 'value_{counter}', '''
             table_str += F'''"NULL" AS 'error_low_{counter}', '''
             table_str += F'''"NULL" AS 'error_high_{counter}', '''
@@ -157,10 +174,19 @@ def sql_columns_str(table_type, parameter_list, table_param_alias, table_str, ou
     return table_param_alias, table_str, output_header, join_clauses, where_clauses, counter, prime_key
 
 
-def format_output(unformatted_output, header="spexodisks_handle,param_x,value_x,error_low_x,error_high_x,ref_x," +
-                                             "units_x,param_y,value_y,error_low_y,error_high_y,ref_y,units_y",
+def format_output(unformatted_output,
+                  header="spexodisks_handle,param_x,value_x,error_low_x,error_high_x,ref_x," +
+                         "units_x,param_y,value_y,error_low_y,error_high_y,ref_y,units_y",
                   prime_key="spexodisks_handle"):
+    """
+    The output MySQL data has a lot of repeated values as a result of outer joins.
 
+    We are going to collapse that output into a more user friendly container that is the shape that we want.
+
+    To keep things simple, all the outputs are sorted lists. However, we first leverage some of python's other
+    faster variable types to reshape the data and get rid of some duplicates.
+    """
+    # The header is
     header = header.split(',')
     # Data columns have a mapping, name_columns have no extra mapping, here we determine the mapping and keep the order
     handle_dict = {}
@@ -252,70 +278,6 @@ class QueryEngine:
     def close(self):
         self.output_sql.close()
 
-    def property_to_table(self, data_type):
-        if data_type in self.params_str:
-            return "object_params_str"
-        elif data_type in self.params_float | self.object_float_params_fields:
-            return "object_params_float"
-        elif data_type in self.params_spectrum:
-            return "spectra"
-        else:
-            raise KeyError
-
-    def query_plot(self, parsed_query):
-        start_time = time.perf_counter()
-        table_str, output_header, table_added_conditions, where_clauses, counter, prime_key = \
-            self.base_query(parsed_query=parsed_query, join_type="INNER")
-        if where_clauses:
-            table_str += F'''WHERE '''
-            table_str += F'''('''
-        for where_clause in where_clauses:
-            table_str += F'''{where_clause} AND '''
-        if where_clauses:
-            table_str = table_str[:-5] + F''') '''
-        table_name = ""
-        for name in sorted(parsed_query.data_types):
-            table_name += name
-
-        user_table_name = self.output_sql.user_table(table_str=table_str, user_table_name=table_name)
-
-        conditions_query_str = F"""SELECT DISTINCT * """
-        conditions_query_str += F"""FROM temp.{user_table_name} """
-
-        for table_name in table_added_conditions.keys():
-            conditions_query_str += F"""INNER JOIN spexodisks.{table_name} """
-            conditions_query_str += F"""ON temp.{user_table_name}.spexodisks_handle = """
-            conditions_query_str += F"""spexodisks.{table_name}.spexodisks_handle """
-
-        if table_added_conditions:
-            conditions_query_str += F"""WHERE """
-        is_first_condition = True
-        for table_name in table_added_conditions.keys():
-            for condition in table_added_conditions[table_name]:
-                single_condition = F"""{condition} """
-                if is_first_condition:
-                    conditions_query_str += single_condition.replace("AND ", "")
-                    is_first_condition = False
-                else:
-                    conditions_query_str += single_condition
-        conditions_query_str += ";"
-        raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str)
-        formatted_sql_output = format_output(unformatted_output=raw_sql_output, header=output_header,
-                                             prime_key=prime_key)
-        end_time = time.perf_counter()
-        self.query_log.append(F"plot|{end_time - start_time}|{conditions_query_str}")
-        return formatted_sql_output
-
-    def data_type_to_table_location(self, data_type):
-        if data_type in self.params_str or "str" in data_type:
-            return "object_params_str"
-        elif data_type in self.params_float or "float" in data_type:
-            return "object_params_float"
-        elif data_type in self.params_spectrum or "spectrum" in data_type:
-            return "spectra"
-        else:
-            raise KeyError(F"Data type {data_type} is not valid.")
-
     def base_query(self, parsed_query, join_type="LEFT OUTER"):
         parameters_by_table = {"spectra": set(), "object_params_str": set(), "object_params_float": set()}
         for outer_join_data_type in parsed_query.data_types:
@@ -359,7 +321,87 @@ class QueryEngine:
             table_str += str(join_clause)
         return table_str, output_header, table_added_conditions, where_clauses, counter, prime_key
 
-    def query_table(self, parsed_query, join_type="LEFT OUTER"):
+    def data_type_to_table_location(self, data_type):
+        if data_type in self.params_str or "str" in data_type:
+            return "object_params_str"
+        elif data_type in self.params_float or "float" in data_type:
+            return "object_params_float"
+        elif data_type in self.params_spectrum or "spectrum" in data_type:
+            return "spectra"
+        else:
+            raise KeyError(F"Data type {data_type} is not valid.")
+
+    def query_single(self, parsed_query, join_type="LEFT OUTER"):
+        """
+        Query string formatting:
+        "return_data_format, num_of_data_types, x_data_type [, y_data_type, z_data_type, ...] [, conditions]"
+        where square brackets, [], show optional strings.
+
+        Whitespace is ignored, but are useful for clarity and making things easy to look at in test strings.
+            x_data_type, y_data_type, ...: The supported data types are listed in a few simple tables on the MySQL database.
+                                           These tables are generated as a part of the construction of the database,
+                                           from Caleb Python pipeline. to look at these types ofr the current database:
+                                               import QueryEngine # it is in this file
+                                               qe = QueryEngine()
+                                               # then see the allowed values in
+                                               qe.params_str
+                                               qe.params_float
+                                               ge.object_float_params_fields
+                                               qe.params_spectrum
+                                               ge.params_spectrum_str
+                                               ge.params_spectrum_float
+
+
+        When "plot" == return_data_format the query string is formatted as
+                "plot,num_of_data_types,x_data_type,[y_data_type, ...][,conditions]"
+
+        When "table" == return_data_format the query string is formatted in the exact same way!
+                "table,num_of_data_types,x_data_type,[y_data_type, ...][,conditions]"
+
+        The difference is that 'plot' will use faster INNER JOINs that require all the returned data to have a value.
+        For example, if 'plot' is selected, with parameters x_param and y_param but a given star only has values for
+        x_param and not y_param then that data is not returned. This dat would not be good for a plot that needs one
+        at least on x_param per y_param.
+
+        Selecting 'table' means that an LEFT OUTER JOIN will be used. This process would return data in previous example,
+        where a certain object is missing data for some parameters. This is useful fo table type data, where null values
+        for some objects is fine.
+
+        num_of_data_types: a number that tells you how many data types for the parser to expect.
+
+        Conditions have a complex structure to maximize the potential of MYSQL.
+        While initial parsing of the query string splits based on the comma ",",
+        the conditions are split again be a secondary delimiter the pipe "|".
+        Multiple conditions are split with a comma ",".
+        The conditions format is:
+            "logical_prefix|start_parentheses|target_type|comparator|target_value|end_parentheses"
+
+        This mimics the MySQL structure. There is plenty of room to send in bad conditions or leave unclosed parentheses.
+        Where possible, I have built in exceptions to stop bad queries.
+            logical_prefix: This should be either {"and", "or"}. The parser is expecting the first condition to have "AND",
+                            but that first logical_operator that is omitted final query.
+            start_parentheses: This counts the number of "(" in the parsed string, can be 0 to n_int.
+            target_type: same options as for x_data_type and y_data_type above.
+            comparator: this can be any mySQL operator, the only thing the parser does is strip whitespace from the ends
+                        of this string.
+            target_value: this is a value is being compared. Values that are str, int, floats should all be entered as
+                          strings. The parser will automatically add the '' required for string comparison for the
+                          mySQL query.
+            end_parentheses: This counts the number of ")" in the parsed string, can be 0 to n_int.
+
+
+
+        Formatted output: a list with each element is a tuple with the format
+            (key:str, spectrum_handles:list, spexodisks_handles, pop_names, preferred_simbad_name, x_params, y_params, ...).
+
+
+        The output list is alphabetically sorted by the 'key', which is dynamically choose to be either the
+        spexodisks_handle or the spectrum_handle when spectrum data is return.
+        x_data_list and y_data_list, ect., will be list with a
+        length of at least 1, but more are possible many more depending on how much data was found.
+        The elements of x_data_list and y_data_list are NamedTuples and can be accessed using the "." or attribute
+        structure.
+        """
         start_time = time.perf_counter()
         table_str, output_header, table_added_conditions, where_clauses, counter, prime_key = \
             self.base_query(parsed_query=parsed_query, join_type=join_type)
@@ -375,14 +417,12 @@ class QueryEngine:
             counter += 1
             for condition in table_added_conditions[main_table_type]:
                 conditions_where_clauses.append(Condition(logic_prefix=condition.logic_prefix,
-                                                                  target_type=condition.target_type,
-                                                                  comparator=condition.comparator,
-                                                                  target_value=condition.target_value,
-                                                                  table_name=F"{alias}",
-                                                                  start_parentheses=condition.start_parentheses,
-                                                                  end_parentheses=condition.end_parentheses))
-
-
+                                                          target_type=condition.target_type,
+                                                          comparator=condition.comparator,
+                                                          target_value=condition.target_value,
+                                                          table_name=F"{alias}",
+                                                          start_parentheses=condition.start_parentheses,
+                                                          end_parentheses=condition.end_parentheses))
         if any([where_clauses != [], conditions_where_clauses != []]):
             table_str += F'''WHERE '''
             is_first_condition = True
@@ -408,150 +448,71 @@ class QueryEngine:
         raw_sql_output = self.output_sql.query(sql_query_str=table_str)
         formatted_output = format_output(unformatted_output=raw_sql_output, header=output_header, prime_key=prime_key)
         end_time = time.perf_counter()
-        self.query_log.append(F"table|{end_time - start_time}|{table_str}")
+        self.query_log.appendleft(F"{join_type}|{end_time - start_time}|{table_str}")
         return formatted_output
 
+    def query_double(self, parsed_query, join_type="INNER"):
+        start_time = time.perf_counter()
+        table_str, output_header, table_added_conditions, where_clauses, counter, prime_key = \
+            self.base_query(parsed_query=parsed_query, join_type=join_type)
+        if where_clauses:
+            table_str += F'''WHERE '''
+            table_str += F'''('''
+        for where_clause in where_clauses:
+            table_str += F'''{where_clause} AND '''
+        if where_clauses:
+            table_str = table_str[:-5] + F''') '''
+        table_name = join_type.replace(" ", "")
+        for name in sorted(parsed_query.data_types):
+            table_name += name
+
+        user_table_name = self.output_sql.user_table(table_str=table_str, user_table_name=table_name)
+
+        conditions_query_str = F"""SELECT DISTINCT * """
+        conditions_query_str += F"""FROM temp.{user_table_name} """
+
+        for table_name in table_added_conditions.keys():
+            conditions_query_str += F"""INNER JOIN spexodisks.{table_name} """
+            conditions_query_str += F"""ON temp.{user_table_name}.spexodisks_handle = """
+            conditions_query_str += F"""spexodisks.{table_name}.spexodisks_handle """
+
+        if table_added_conditions:
+            conditions_query_str += F"""WHERE """
+        is_first_condition = True
+        for table_name in table_added_conditions.keys():
+            for condition in table_added_conditions[table_name]:
+                single_condition = F"""{condition} """
+                if is_first_condition:
+                    conditions_query_str += single_condition.replace("AND ", "")
+                    is_first_condition = False
+                else:
+                    conditions_query_str += single_condition
+        conditions_query_str += ";"
+        raw_sql_output = self.output_sql.query(sql_query_str=conditions_query_str)
+        formatted_sql_output = format_output(unformatted_output=raw_sql_output, header=output_header,
+                                             prime_key=prime_key)
+        end_time = time.perf_counter()
+        self.query_log.appendleft(F"query_double|{join_type}|{end_time - start_time}|{conditions_query_str}")
+        return formatted_sql_output
+
     def query(self, query_str):
+        # parse the query, this state is what each method will be expecting.
         parsed_query = parse_query_str(query_str=query_str)
-        if parsed_query.query_type == "plot":
-            return self.query_plot(parsed_query=parsed_query)
-        elif parsed_query.query_type == "table":
-            return self.query_table(parsed_query=parsed_query)
+        parsed_query_type = parsed_query.query_type
+        # detect a modifier that selects between a single query (all data in one query)
+        # and double query (all data after two queries to the MySQL Server)
+        if parsed_query_type[-1] == "!":
+            query_method = self.query_double
+            parsed_query_type = parsed_query_type[:-1]
         else:
-            raise KeyError(F"Query type {parsed_query.query_type} is not valid.")
+            query_method = self.query_single
 
-
-if __name__ == "__main__":
-    """
-    Query string formatting:
-    "return_data_format, x_data_type [, y_data_type] [, conditions]" where square brackets, [], show optional strings.
-    Whitespace is ignored, but useful for clarity easy of look-up in the test strings.
-        x_data_type, y_data_type: The supported data types are listed in a few simple tables on the MySQL database. 
-                                  These tables are generated as a part of the construction of the database,
-                                  from Caleb Python pipeline. to look at these types ofr the current database:
-                                        import QueryEngine # it is in this file 
-                                        qe = QueryEngine()
-                                        # then see the allowed values in
-                                        qe.params_str
-                                        qe.params_float
-                                        ge.object_float_params_fields
-                                        qe.params_spectrum
-                                        ge.params_spectrum_str
-                                        ge.params_spectrum_float
-                                        
-    
-    When "xy_plot" == return_data_format (the only working example on 12-20-2020) the query string is formatted as
-                "xy_plot,x_data_type,y_data_type,[conditions]"
-                
-    Conditions have a complex structure to maximize of MYSQL. While initial parsing of the query string splits based on
-    the comma ",", the conditions are split again be a secondary delimiter the pipe "|". Multiple conditions are split 
-    with a comma ",". The conditions format is
-        "logical_prefix|start_parentheses|target_type|comparator|target_value|end_parentheses"
-    
-    This mimics the MySQL structure. There is plenty of room to send in bad conditions, or leave unclose parentheses.
-    Where possible, I have built in exceptions to stop bad queries.
-        logical_prefix: This should be either {"and", "or"}. I am expecting the first condition list to have a "and"
-                        logical_operator that is omitted for the SQL query.
-        start_parentheses: This counts the number of "(" in the parsed string, can be 0 to n_int.
-        target_type: same options as for x_data_type and y_data_type above.
-        comparator: this can be any mySQL operator, the only thing the parser does is strip whitespace from the ends
-                    of this string.
-        target_value: this is a value is being compared. Values that are str, int, floats should all be entered as
-                      strings. The parser will automatically add the '' required for string comparison for the 
-                      mySQL query.
-        end_parentheses: This counts the number of ")" in the parsed string, can be 0 to n_int.
-                      
-          
-            
-    Formatted output: a list with each element is a tuple with the format (spexodisks_handle, x_data_list, y_data_list).
-    The list is alphabetically sorted by the spexodisks handle. x_data_list and y_data_list, will be list with a
-    length of at least 1, but more are possible many more depending on how much data was found.
-    The elements of x_data_list and y_data_list are NamedTuples and can be accessed using the "." or attribute 
-    structure. 
-    
-    
-    
-    About the query design. I am using a reductive strategy to reduce the number of comparisons required. 
-    We first create an intermediate table with the maximum amount of data but only for two data types. But now we can 
-    do any number of comparisons but will already start reduced data set to search. Additionally, I standardized the 
-    intermediate table format, so that subsequent conditional statements can have standard formatting.
-    
-    The results are fast. I am considering pre-making every possible intermediate table. Or at least saving the 
-    one we already made and looking up if they exist before making another. 
-    
-    
-    
-    Plot example below for input and output examples. Run this file in Pycharm's debug mode to examine the 
-    states and structure of the code as it runs. Using pycharm "run this file in the python console", to continue 
-    testing on and using these variables set after the code has competed successfully. 
-    
-    
-    """
-
-    qe = QueryEngine()
-    qe2 = QueryEngine()
-    test1 = qe.query(query_str="plot,2,teff,dist")
-    test2 = qe2.query(query_str="plot,2,mass,spectrum_resolution_um")
-    test3 = qe2.query(query_str="plot,2,spectrum_min_wavelength_um,spectrum_max_wavelength_um")
-
-    test4 = qe.query(query_str="plot,2,mass,dist,"
-                               "and|((|float_param_type|=|teff|  ,"
-                               "and|  |float_value     |>|4000|) ,"
-                               "and| (|float_param_type|=|teff|  ,"
-                               "and|  |float_value     |<|5000|))")
-    test5 = qe.query(query_str="plot,2,spectrum_min_wavelength_um,dist,"
-                               "and|((|float_param_type|=|teff|  ,"
-                               "and|  |float_value     |>|4000|) ,"
-                               "and| (|float_param_type|=|teff|  ,"
-                               "and|  |float_value     |<|5000|))")
-
-    test6 = qe.query(query_str="plot,2,spectrum_min_wavelength_um,dist,"
-                               "and|((|float_param_type |=|teff   |  ,"
-                               "and|  |float_value      |>|4000   |) ,"
-                               "and| (|float_param_type |=|teff   |  ,"
-                               "and|  |float_value      |<|5000   |)),"
-                               "and| (|spectrum_set_type|=|creres |  ,"
-                               "or |  |spectrum_set_type|=|nirspec|)  ")
-    test7 = qe2.query(query_str="table,4,spectrum_min_wavelength_um,teff,rings,dist,"
-                               "and|((|float_param_type |=|teff   |  ,"
-                               "and|  |float_value      |>|4000   |) ,"
-                               "and| (|float_param_type |=|teff   |  ,"
-                               "and|  |float_value      |<|5000   |)),"
-                               "and| (|spectrum_set_type|=|creres |  ,"
-                               "or |  |spectrum_set_type|=|nirspec|)  ")
-
-    # for a_test in test1, test2, test3, test4, test5, test6]:
-    #     fig, ax = plt.subplots()
-    #     x_param, y_param, x_units, y_units = None, None, None, None
-    #     for spexodisks_handle, x_data_list, y_data_list in a_test:
-    #         mean_x = np.mean([x_data.value for x_data in x_data_list])
-    #         mean_y = np.mean([y_data.value for y_data in y_data_list])
-    #         coordinate_pairs_this_object = {}
-    #         for x_data in x_data_list:
-    #             for y_data in y_data_list:
-    #                 r, phi = local_polar_coordinates(x=x_data.value, y=y_data.value, x_offset=mean_x, y_offset=mean_y)
-    #                 coordinate_pairs_this_object[(r, phi)] = (x_data, y_data)
-    #                 if x_param is None:
-    #                     x_param = x_data.param
-    #                 if y_param is None:
-    #                     y_param = y_data.param
-    #                 if x_units is None:
-    #                     x_units = x_data.units
-    #                 if y_units is None:
-    #                     y_units = y_data.units
-    #         plot_coordinate_pairs = sorted(coordinate_pairs_this_object.keys(), key=itemgetter(1, 0))
-    #         if len(plot_coordinate_pairs) > 2:
-    #             plot_coordinate_pairs.append(plot_coordinate_pairs[0])
-    #         x = []
-    #         y = []
-    #         for pair in plot_coordinate_pairs:
-    #             x_data, y_data = coordinate_pairs_this_object[pair]
-    #             x.append(x_data.value)
-    #             y.append(y_data.value)
-    #         plt.plot(x, y)
-    #     plt.title(F"{len(a_test)} objects plotted")
-    #     plt.xlabel(F"{x_param.upper()} ({x_units})")
-    #     plt.ylabel(F"{y_param.upper()} ({y_units})")
-    #     plt.show()
-
-
+        # Select between SQL JOIN types
+        if parsed_query_type == "plot":
+            join_type = "INNER"
+        elif parsed_query_type == "table":
+            join_type = "LEFT OUTER"
+        else:
+            raise KeyError(F"Query type {parsed_query_type} is not valid.")
+        # The requested Query is now performed.
+        return query_method(parsed_query=parsed_query, join_type=join_type)
