@@ -445,10 +445,10 @@ class OutputSQL:
         self.cursor.execute(F"""CREATE TABLE spexodisks.{table_name}
                                 SELECT spexodisks.spectra.spectrum_handle, spexodisks.spectra.spexodisks_handle,
                                 spexodisks.stars.pop_name, spexodisks.stars.preferred_simbad_name
-                                FROM spexodisks.spectra JOIN spexodisks.stars 
-                                ON spexodisks.spectra.spexodisks_handle = spexodisks.stars.spexodisks_handle;""")
-        self.cursor.execute(F"""ALTER TABLE spexodisks.{table_name}
-                                ADD PRIMARY KEY (spectrum_handle);""")
+                                FROM spexodisks.stars 
+                                LEFT OUTER JOIN spexodisks.spectra
+                                ON spexodisks.stars.spexodisks_handle = spexodisks.spectra.spexodisks_handle;""")
+        self.cursor.execute(F"""ALTER TABLE spexodisks.{table_name};""")
         self.connection.commit()
 
 
