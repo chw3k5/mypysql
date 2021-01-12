@@ -443,7 +443,7 @@ class OutputSQL:
         table_name = "handles"
         self.prep_table_ops(table=F"{table_name}")
         self.cursor.execute(F"""CREATE TABLE spexodisks.{table_name}
-                                SELECT spexodisks.spectra.spectrum_handle, spexodisks.spectra.spexodisks_handle,
+                                SELECT spexodisks.spectra.spectrum_handle, spexodisks.stars.spexodisks_handle,
                                 spexodisks.stars.pop_name, spexodisks.stars.preferred_simbad_name
                                 FROM spexodisks.stars 
                                 LEFT OUTER JOIN spexodisks.spectra
