@@ -1,7 +1,9 @@
-from matplotlib import pyplot as plt
 import numpy as np
 from operator import itemgetter
 from mypysql.query import QueryEngine
+import matplotlib
+import matplotlib.pyplot as plt
+matplotlib.use(backend="TkAgg")
 
 
 def local_polar_coordinates(x, y, x_offset, y_offset):
@@ -71,7 +73,15 @@ test6 = qe.query(query_str="plot,2,spectrum_min_wavelength_um,dist,"
                            "and|  |float_value      |<|5000   |)),"
                            "and| (|spectrum_set_type|=|creres |  ,"
                            "or |  |spectrum_set_type|=|nirspec|)  ")
-test7 = qe2.query(query_str="table,4,spectrum_min_wavelength_um,teff,rings,dist,"
+test7 = qe2.query(query_str="plot,4,spectrum_min_wavelength_um,teff,rings,dist,"
+                            "and|((|float_param_type |=|teff   |  ,"
+                            "and|  |float_value      |>|4000   |) ,"
+                            "and| (|float_param_type |=|teff   |  ,"
+                            "and|  |float_value      |<|5000   |)),"
+                            "and| (|spectrum_set_type|=|creres |  ,"
+                            "or |  |spectrum_set_type|=|nirspec|)  ")
+
+test8 = qe.query(query_str="table,4,spectrum_min_wavelength_um,teff,rings,dist,"
                            "and|((|float_param_type |=|teff   |  ,"
                            "and|  |float_value      |>|4000   |) ,"
                            "and| (|float_param_type |=|teff   |  ,"

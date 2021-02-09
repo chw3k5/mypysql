@@ -279,11 +279,6 @@ class QueryEngine:
         self.output_sql.close()
 
     def base_query(self, parsed_query, join_type="LEFT OUTER"):
-        parameters_by_table = {"spectra": set(), "object_params_str": set(), "object_params_float": set()}
-        for outer_join_data_type in parsed_query.data_types:
-            table_location = self.data_type_to_table_location(outer_join_data_type)
-            parameters_by_table[table_location].add((F"spexodisks.{table_location}", outer_join_data_type))
-
         # find out what tables the conditions reference
         table_added_conditions = {}
         for condition in parsed_query.conditions:
@@ -309,10 +304,11 @@ class QueryEngine:
                     'h.preferred_simbad_name, '
         output_header = 'spectrum_handle,spexodisks_handle,pop_name,preferred_simbad_name,'
         # make the strings for the SQL query
-        for table_type in sorted(parameters_by_table.keys()):
-            parameter_list = sorted(parameters_by_table[table_type])
+        for outer_join_data_type in parsed_query.data_types:
+            table_location = self.data_type_to_table_location(outer_join_data_type)
+            parameter_list = [(F'spexodisks.{table_location}', outer_join_data_type)]
             table_param_alias, table_str, output_header, join_clauses, where_clauses, counter, prime_key = \
-                sql_columns_str(table_type, parameter_list, table_param_alias, table_str, output_header,
+                sql_columns_str(table_location, parameter_list, table_param_alias, table_str, output_header,
                                 join_clauses, where_clauses, counter, prime_key, join_type=join_type)
         # Clean up and add join clauses to the table str
         output_header = output_header[:-1]
