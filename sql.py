@@ -239,7 +239,10 @@ def insert_into_table_str(table_name, data, database=None):
 
 def generate_sql_config_file(user_name, password):
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    config_file_name = os.path.join(dir_path, 'new_configs', 'sql_config.py')
+    new_configs_dir = os.path.join(dir_path, 'new_configs')
+    if not os.path.isdir(new_configs_dir):
+        os.mkdir(new_configs_dir)
+    config_file_name = os.path.join(new_configs_dir, 'sql_config.py')
     with open(config_file_name, 'w') as f:
         f.write(F"""sql_host = "{sql_host}"\n""")
         f.write(F"""sql_port = "{sql_port}"\n""")
@@ -455,7 +458,7 @@ class OutputSQL:
 if __name__ == "__main__":
     output_sql = OutputSQL()
     try:
-        output_sql.handles_table()
+        output_sql.make_new_dba_user('isaac')
     except:
         output_sql.close()
         raise
