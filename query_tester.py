@@ -1,5 +1,7 @@
 import numpy as np
 from operator import itemgetter
+
+import ref
 from mypysql.query import QueryEngine
 import matplotlib
 import matplotlib.pyplot as plt
@@ -88,6 +90,9 @@ test8 = qe.query(query_str="table,4,spectrum_min_wavelength_um,teff,rings,dist,"
                            "and|  |float_value      |<|5000   |)),"
                            "and| (|spectrum_set_type|=|creres |  ,"
                            "or |  |spectrum_set_type|=|nirspec|)  ")
+
+curated1 = qe.curated_query(params=None, database='spexodisks')
+curated2 = qe.curated_query(params=['mass', 'teff', 'dist'], database='spexodisks')
 qe.close()
 qe2.close()
 

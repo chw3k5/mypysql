@@ -4,6 +4,8 @@ import string
 from datetime import datetime
 from numpy import float32, float64
 import mysql.connector
+
+import ref
 from mypysql.sql_config import sql_host, sql_user, sql_database, sql_password, sql_port
 # # Avoid a requirement to have created a SQL config file created to run the rest of the project
 # try:
@@ -262,7 +264,7 @@ class OutputSQL:
         else:
             self.connection = None
             self.cursor = None
-        self.buffer = None
+        self.buffers = {}
         self.next_user_table_number = 1
 
     def open(self):
@@ -350,17 +352,17 @@ class OutputSQL:
         self.cursor.execute(insert_str)
         self.connection.commit()
 
-    def buffer_insert_init(self, table_name, columns, database, run_silent=False):
+    def buffer_insert_init(self, table_name, columns, database, run_silent=False, buffer_num=0):
         if self.verbose and not run_silent:
             print("  Buffer inserting " + database + "." + table_name)
-        self.buffer = make_insert_columns_str(table_name, columns, database)
+        self.buffers[buffer_num] = make_insert_columns_str(table_name, columns, database)
 
-    def buffer_insert_value(self, values):
-        self.buffer += make_insert_values_str(values) + ", "
+    def buffer_insert_value(self, values, buffer_num=0):
+        self.buffers[buffer_num] += make_insert_values_str(values) + ", "
 
-    def buffer_insert_execute(self, run_silent=False):
+    def buffer_insert_execute(self, run_silent=False, buffer_num=0):
         self.open_if_closed()
-        self.cursor.execute(self.buffer[:-2] + ";")
+        self.cursor.execute(self.buffers[buffer_num][:-2] + ";")
         self.connection.commit()
         if self.verbose and not run_silent:
             print("    Table inserted")
@@ -402,14 +404,28 @@ class OutputSQL:
         self.connection.commit()
         return user_table_name
 
-    def main_table(self):
-        self.prep_table_ops(table="main")
+    def get_tables(self, database):
+        return self.query(F'''SELECT table_name FROM information_schema.tables
+                                WHERE table_schema = "{database}"''')
+
+    def main_table(self, database):
+        self.prep_table_ops(table="main", database=database)
         self.cursor.execute(
             """CREATE TABLE `main` (main_index int NOT NULL AUTO_INCREMENT, PRIMARY KEY (main_index))
                      SELECT stars.spexodisks_handle, stars.pop_name, stars.preferred_simbad_name, 
-                            object_params_str.str_index_params, object_params_str.str_param_type, object_params_str.str_value, object_params_str.str_error, object_params_str.str_ref, object_params_str.str_units, object_params_str.str_notes,
-                            object_params_float.float_index_params, object_params_float.float_param_type, object_params_float.float_value, object_params_float.float_error_low, object_params_float.float_error_high, object_params_float.float_ref, object_params_float.float_units, object_params_float.float_notes,
-                            spectra.spectrum_handle, spectra.spectrum_set_type, spectra.spectrum_observation_date, spectra.spectrum_pi, spectra.spectrum_reference, spectra.spectrum_downloadable, spectra.spectrum_data_reduction_by, spectra.spectrum_aor_key, spectra.spectrum_flux_is_calibrated, spectra.spectrum_ref_frame, spectra.spectrum_min_wavelength_um, spectra.spectrum_max_wavelength_um, spectra.spectrum_resolution_um, spectra.spectrum_output_filename
+                            object_params_str.str_index_params, object_params_str.str_param_type, 
+                            object_params_str.str_value, object_params_str.str_error, object_params_str.str_ref, 
+                            object_params_str.str_units, object_params_str.str_notes,
+                            object_params_float.float_index_params, object_params_float.float_param_type, 
+                            object_params_float.float_value, object_params_float.float_error_low, 
+                            object_params_float.float_error_high, object_params_float.float_ref, 
+                            object_params_float.float_units, object_params_float.float_notes,
+                            spectra.spectrum_handle, spectra.spectrum_set_type, spectra.spectrum_observation_date, 
+                            spectra.spectrum_pi, spectra.spectrum_reference, spectra.spectrum_downloadable, 
+                            spectra.spectrum_data_reduction_by, spectra.spectrum_aor_key, 
+                            spectra.spectrum_flux_is_calibrated, spectra.spectrum_ref_frame, 
+                            spectra.spectrum_min_wavelength_um, spectra.spectrum_max_wavelength_um, 
+                            spectra.spectrum_resolution_um, spectra.spectrum_output_filename
                      FROM stars
                          LEFT OUTER JOIN object_params_str
                              ON stars.spexodisks_handle = object_params_str.spexodisks_handle
@@ -419,43 +435,83 @@ class OutputSQL:
                              ON stars.spexodisks_handle = spectra.spexodisks_handle""")
         self.connection.commit()
 
-    def params_tables(self):
+    def params_tables(self, database):
         table_name = "available_float_params"
-        self.prep_table_ops(table=F"{table_name}")
+        self.prep_table_ops(table=F"{table_name}", database=database)
         self.cursor.execute(F"""CREATE TABLE {table_name}
                                     SELECT DISTINCT(float_param_type) AS float_params FROM object_params_float;""")
         self.connection.commit()
 
         table_name = "available_str_params"
-        self.prep_table_ops(table=F"{table_name}")
+        self.prep_table_ops(table=F"{table_name}", database=database)
         self.cursor.execute(F"""CREATE TABLE {table_name}
                                     SELECT DISTINCT(str_param_type) AS str_params FROM object_params_str;""")
         self.connection.commit()
 
         table_name = "available_spectrum_params"
-        self.prep_table_ops(table=F"{table_name}")
+        self.prep_table_ops(table=F"{table_name}", database=database)
         self.cursor.execute(F"""CREATE TABLE {table_name}
                                     SELECT COLUMN_NAME AS spectrum_params
                                         FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'spectra';""")
         self.connection.commit()
 
-    def handles_table(self):
+    def handles_table(self, database):
         table_name = "handles"
-        self.prep_table_ops(table=F"{table_name}")
-        self.cursor.execute(F"""CREATE TABLE spexodisks.{table_name}
-                                SELECT spexodisks.spectra.spectrum_handle, spexodisks.stars.spexodisks_handle,
-                                spexodisks.stars.pop_name, spexodisks.stars.preferred_simbad_name
-                                FROM spexodisks.stars 
-                                LEFT OUTER JOIN spexodisks.spectra
-                                ON spexodisks.stars.spexodisks_handle = spexodisks.spectra.spexodisks_handle;""")
-        self.cursor.execute(F"""ALTER TABLE spexodisks.{table_name};""")
+        self.prep_table_ops(table=F"{table_name}", database=database)
+        self.cursor.execute(F"""CREATE TABLE {database}.{table_name}
+                                    SELECT spexodisks.spectra.spectrum_handle, spexodisks.stars.spexodisks_handle,
+                                        spexodisks.stars.pop_name, spexodisks.stars.preferred_simbad_name
+                                    FROM spexodisks.stars 
+                                        LEFT OUTER JOIN spexodisks.spectra
+                                        ON spexodisks.stars.spexodisks_handle = spexodisks.spectra.spexodisks_handle;""")
+        self.cursor.execute(F"""ALTER TABLE {database}.{table_name};""")
         self.connection.commit()
+
+    def create_curated_table(self, float_params, str_params, database):
+        float_specs = [float_param.replace(' NOT NULL', ''), float_param_error, float_param_error, param_ref]
+        str_specs = [str_param.replace(' NOT NULL', ''), str_param_error, str_param_error, param_ref]
+        table_name = 'curated'
+
+        self.prep_table_ops(table=table_name, database=database)
+        create_str = F"CREATE TABLE `{table_name}` (`spexodisks_handle` " + name_specs + "`pop_name` " + name_specs + \
+                     "`preferred_simbad_name` " + name_specs
+        all_column_names = ['spexodisks_handle', 'pop_name', 'preferred_simbad_name']
+        for param in float_params:
+            column_names = [F"{param}_value", F"{param}_err_low", F"{param}_err_high", F"{param}_ref"]
+            all_column_names.extend(column_names)
+            for column_name, specs in zip(column_names, float_specs):
+                create_str += F"`{column_name}` {specs}"
+        for a_str_param in str_params:
+            str_column_names = [F"{a_str_param}_value", F"{a_str_param}_err_low",
+                                F"{a_str_param}_err_high", F"{a_str_param}_ref"]
+            all_column_names.extend(str_column_names)
+            for column_name, spec in zip(str_column_names, str_specs):
+                create_str += F"`{column_name}` {spec}"
+        create_str += "PRIMARY KEY (`spexodisks_handle`)" + ") ENGINE=InnoDB;"
+        self.cursor.execute(create_str)
+        self.connection.commit()
+        return all_column_names
+
+    def update_schemas(self):
+        for target, source in ref.update_schema_map:
+            # get all the tables in the source schema
+            source_tables = [one_ple[0] for one_ple in self.get_tables(database=source)]
+            for table_name in source_tables:
+                # drop the old database table
+                self.drop_if_exists(table_name=table_name, database=target)
+                # move the new database tables to the old locations
+                self.cursor.execute(F"""ALTER TABLE {source}.{table_name}
+                                        RENAME {target}.{table_name};""")
+                print(F"     Moved {source}.{table_name} to {target}.{table_name}")
+                self.connection.commit()
+            print(F"Tables updated in {target}\n   {source_tables}")
 
 
 if __name__ == "__main__":
     output_sql = OutputSQL()
     try:
-        output_sql.handles_table()
+        pass
+        # output_sql.update_schemas()
     except:
         output_sql.close()
         raise

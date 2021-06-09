@@ -1,9 +1,10 @@
 from typing import NamedTuple, Union, Optional
-from mypysql.sql import OutputSQL
 from operator import attrgetter
 from copy import deepcopy
 from collections import deque
 import time
+import pandas as pd
+from mypysql.sql import OutputSQL
 
 
 def is_num(test_str):
@@ -254,26 +255,28 @@ def format_output(unformatted_output,
 class QueryEngine:
     query_log = deque(maxlen=int(1e4))
 
-    def __init__(self):
+    def __init__(self, database='spexodisks'):
         self.output_sql = OutputSQL()
         self.params_str = {item[0] for item in
                            self.output_sql.query(
-                               sql_query_str="SELECT str_params FROM spexodisks.available_str_params")}
+                               sql_query_str=F"SELECT str_params FROM {database}.available_str_params")}
 
         self.params_float = {item[0] for item in
                              self.output_sql.query(
-                                 sql_query_str="SELECT float_params FROM spexodisks.available_float_params")}
+                                 sql_query_str=F"SELECT float_params FROM {database}.available_float_params")}
         self.object_float_params_fields = {item[0] for item in
                                            self.output_sql.query(
                                             F"""SELECT COLUMN_NAME AS spectrum_params
-                                        FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'object_params_float';""")}
+                                                FROM INFORMATION_SCHEMA.COLUMNS 
+                                                WHERE TABLE_NAME = 'object_params_float';""")}
 
         self.params_spectrum = {item[0] for item in
                                 self.output_sql.query(
-                                    sql_query_str="SELECT spectrum_params FROM spexodisks.available_spectrum_params")}
+                                    sql_query_str=F"SELECT spectrum_params FROM {database}.available_spectrum_params")}
         self.params_spectrum_str = {"spectrum_handle", "spexodisks_handle", "set_type", "pi", "reference",
                                     "data_reduction_by", "aor_key", "ref_frame", "output_filename"}
         self.params_spectrum_float = self.params_spectrum - self.params_spectrum_str
+        self.object_params = self.params_str | self.params_float
 
     def close(self):
         self.output_sql.close()
@@ -512,3 +515,38 @@ class QueryEngine:
             raise KeyError(F"Query type {parsed_query_type} is not valid.")
         # The requested Query is now performed.
         return query_method(parsed_query=parsed_query, join_type=join_type)
+
+    def curated_query(self, params=None, database='spexodisks'):
+        """
+
+        :param params: None or list of str. None returns all columns of data. As a list of strings,
+                       this argument controls what columns of data are returned.
+        :param database: str. Default is the main MySQL metadata database 'spexodisks'. However you may want to
+                         query other test d
+        :return: A pandas dataframe. The first three columns are object names
+                 (spexodisks_handle, preferred_simbad_name, pop_name), this is also what an empty list returns.
+                 The for each string in the 'params' list a four columns quad is returned in the pandas dataframe.
+                 The quad order is the order of the 'params' list. The quad format is:
+                 (param_value, param_err_high, param_err_low, param_ref).
+
+        """
+        if params is None:
+            columns_str = '*'
+        else:
+            columns_str = '''"spexodisks_handle", "preferred_simbad_name", "pop_name"'''
+            # test the parameters and to make sure the request can be fulfilled.
+            for test_param in params:
+                if test_param not in self.object_params:
+                    raise KeyError(F"{test_param} was a requested parameters that is not listed in the " +
+                                   F"available object parameters:\n {self.object_params}")
+                columns_str += F''', "{test_param}_value", "{test_param}_err_high", "{test_param}_err_low", 
+                                   "{test_param}_ref"'''
+        # request the query
+        self.output_sql.cursor.execute(F'''SELECT {columns_str} FROM {database}.curated''')
+        # get the returned data
+        table_rows = self.output_sql.cursor.fetchall()
+        # transform to a pandas dataframe
+        df = pd.DataFrame(table_rows)
+        return df
+
+
