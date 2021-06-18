@@ -1,9 +1,8 @@
-from typing import NamedTuple, Union, Optional
-from operator import attrgetter
+import time
 from copy import deepcopy
 from collections import deque
-import time
-import pandas as pd
+from operator import attrgetter
+from typing import NamedTuple, Union, Optional
 from mypysql.sql import OutputSQL
 
 
@@ -545,8 +544,6 @@ class QueryEngine:
         self.output_sql.cursor.execute(F'''SELECT {columns_str} FROM {database}.curated''')
         # get the returned data
         table_rows = self.output_sql.cursor.fetchall()
-        # transform to a pandas dataframe
-        df = pd.DataFrame(table_rows)
-        return df
+        return table_rows
 
 

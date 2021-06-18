@@ -4,8 +4,6 @@ import string
 from datetime import datetime
 from numpy import float32, float64
 import mysql.connector
-
-import ref
 from mypysql.sql_config import sql_host, sql_user, sql_database, sql_password, sql_port
 # # Avoid a requirement to have created a SQL config file created to run the rest of the project
 # try:
@@ -23,6 +21,10 @@ max_notes_len = 100
 
 max_spectral_handle_len = 100
 max_output_filename_len = 200
+
+# how the website updates the tables
+update_schema_map = [('spexodisks', 'new_spexodisks'), ('spectra', 'new_spectra'),
+                     ('stacked_line_spectra', 'new_stacked_line')]
 
 name_specs = F"VARCHAR({max_star_name_size}) NOT NULL, "
 param_name = F"VARCHAR({max_param_type_len}) NOT NULL, "
@@ -493,7 +495,7 @@ class OutputSQL:
         return all_column_names
 
     def update_schemas(self):
-        for target, source in ref.update_schema_map:
+        for target, source in update_schema_map:
             # get all the tables in the source schema
             source_tables = [one_ple[0] for one_ple in self.get_tables(database=source)]
             for table_name in source_tables:

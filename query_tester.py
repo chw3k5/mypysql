@@ -1,7 +1,6 @@
 import numpy as np
 from operator import itemgetter
 
-import ref
 from mypysql.query import QueryEngine
 import matplotlib
 import matplotlib.pyplot as plt
