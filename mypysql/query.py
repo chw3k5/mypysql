@@ -49,7 +49,7 @@ class Condition(NamedTuple):
     table_name: Optional[str] = None
     start_parentheses: Optional[int] = 0
     end_parentheses: Optional[int] = 0
-    
+
     def __str__(self):
         return_str = F"{self.logic_prefix} "
         for counter in range(self.start_parentheses):
@@ -265,7 +265,7 @@ class QueryEngine:
                                  sql_query_str=F"SELECT float_params FROM {database}.available_float_params")}
         self.object_float_params_fields = {item[0] for item in
                                            self.output_sql.query(
-                                            F"""SELECT COLUMN_NAME AS spectrum_params
+                                               F"""SELECT COLUMN_NAME AS spectrum_params
                                                 FROM INFORMATION_SCHEMA.COLUMNS 
                                                 WHERE TABLE_NAME = 'object_params_float';""")}
 
@@ -300,9 +300,9 @@ class QueryEngine:
         join_clauses = []
         where_clauses = []
         counter = 1
-        table_str = 'SELECT h.spectrum_handle, ' +\
-                    'h.spexodisks_handle,  ' +\
-                    'h.pop_name, ' +\
+        table_str = 'SELECT h.spectrum_handle, ' + \
+                    'h.spexodisks_handle,  ' + \
+                    'h.pop_name, ' + \
                     'h.preferred_simbad_name, '
         output_header = 'spectrum_handle,spexodisks_handle,pop_name,preferred_simbad_name,'
         # make the strings for the SQL query
@@ -545,5 +545,4 @@ class QueryEngine:
         # get the returned data
         table_rows = self.output_sql.cursor.fetchall()
         return table_rows
-
 

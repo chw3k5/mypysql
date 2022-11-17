@@ -1,9 +1,11 @@
 import os
-import secrets
 import string
+import secrets
 from datetime import datetime
+
 from numpy import float32, float64
 import mysql.connector
+
 from mypysql.sql_config import sql_host, sql_user, sql_database, sql_password, sql_port
 # # Avoid a requirement to have created a SQL config file created to run the rest of the project
 # try:
@@ -28,8 +30,9 @@ update_schema_map = [('spexodisks', 'new_spexodisks'), ('spectra', 'new_spectra'
 
 name_specs = F"VARCHAR({max_star_name_size}) NOT NULL, "
 param_name = F"VARCHAR({max_param_type_len}) NOT NULL, "
-float_param = F"DOUBLE NOT NULL, "
-float_param_error = F"DOUBLE, "
+float_spec = f"FLOAT"
+float_param = f"{float_spec} NOT NULL, "
+float_param_error = f"{float_spec}, "
 str_param = F"VARCHAR({max_len_str_param}) NOT NULL, "
 str_param_error = F"VARCHAR({max_len_str_param}), "
 param_ref = F"VARCHAR({max_ref_len}), "
@@ -40,13 +43,53 @@ spectrum_handle = F"VARCHAR({max_spectral_handle_len}) NOT NULL, "
 stacked_line_handle = F"VARCHAR({max_spectral_handle_len + 30}) NOT NULL, "
 output_filename = F"VARCHAR({max_output_filename_len}), "
 
-create_tables = {'stars': "CREATE TABLE `stars` (`spexodisks_handle` " + name_specs +
-                                                "`pop_name` " + name_specs +
-                                                "`preferred_simbad_name` " + name_specs +
-                                                "PRIMARY KEY (`spexodisks_handle`)" +
-                                                ") " +
-                          "ENGINE=InnoDB;",
-                 'object_name_aliases': "CREATE TABLE `object_name_aliases` (`alias` " + name_specs +
+co_table_header = "(`index_CO` int(11) NOT NULL AUTO_INCREMENT, " + \
+                   "`wavelength_um` " + float_param + \
+                   "`isotopologue` VARCHAR(20), " + \
+                   "`upper_level` VARCHAR(30), " + \
+                   "`lower_level` VARCHAR(30), " + \
+                   "`transition` VARCHAR(30), " + \
+                   "`einstein_A` " + float_param + \
+                   "`upper_level_energy` " + float_param + \
+                   "`lower_level_energy` " + float_param + \
+                   "`g_statistical_weight_upper_level` " + float_param + \
+                   "`g_statistical_weight_lower_level` " + float_param + \
+                   "`upper_vibrational` INT(2), " + \
+                   "`upper_rotational` INT(2), " + \
+                   "`branch` VARCHAR(1), " + \
+                   "`lower_vibrational` INT(2), " + \
+                   "`lower_rotational` INT(2), " + \
+                    "PRIMARY KEY (`index_CO`)" + \
+                   ") ENGINE=InnoDB;"
+
+h20_table_header = "(`index_H2O` int(11) NOT NULL AUTO_INCREMENT, " + \
+                    "`wavelength_um` " + float_param + \
+                    "`isotopologue` VARCHAR(20), " + \
+                    "`upper_level` VARCHAR(30), " + \
+                    "`lower_level` VARCHAR(30), " + \
+                    "`transition` VARCHAR(65), " + \
+                    "`einstein_A` " + float_param + \
+                    "`upper_level_energy` " + float_param + \
+                    "`lower_level_energy` " + float_param + \
+                    "`g_statistical_weight_upper_level` " + float_param + \
+                    "`g_statistical_weight_lower_level` " + float_param + \
+                    "`upper_vibrational1` INT(2), " + \
+                    "`upper_vibrational2` INT(2), " + \
+                    "`upper_vibrational3` INT(2), " + \
+                    "`upper_rotational` INT(2), " + \
+                    "`upper_ka` INT(2), " + \
+                    "`upper_kc` INT(2), " + \
+                    "`lower_vibrational1` INT(2), " + \
+                    "`lower_vibrational2` INT(2), " + \
+                    "`lower_vibrational3` INT(2), " + \
+                    "`lower_rotational` INT(2), " + \
+                    "`lower_ka` INT(2), " + \
+                    "`lower_kc` INT(2), " + \
+                    "PRIMARY KEY (`index_H2O`)" + \
+                    ") ENGINE=InnoDB;"
+
+
+create_tables = {'object_name_aliases': "CREATE TABLE `object_name_aliases` (`alias` " + name_specs +
                                                                             "`spexodisks_handle` " + name_specs +
                                                                             "PRIMARY KEY (`alias`)" +
                                                                             ") " +
@@ -77,6 +120,7 @@ create_tables = {'stars': "CREATE TABLE `stars` (`spexodisks_handle` " + name_sp
                                                     ") " +
                                                    "ENGINE=InnoDB;",
                  "spectra": "CREATE TABLE `spectra` (`spectrum_handle` " + spectrum_handle +
+                                                    "`spectrum_display_name` " + name_specs +
                                                     "`spexodisks_handle` " + name_specs +
                                                     "`spectrum_set_type` VARCHAR(20), " +
                                                     "`spectrum_observation_date` DATETIME, " +
@@ -94,6 +138,26 @@ create_tables = {'stars': "CREATE TABLE `stars` (`spexodisks_handle` " + name_sp
                                                     "PRIMARY KEY (`spectrum_handle`)" +
                                                     ") " +
                                                    "ENGINE=InnoDB;",
+                 "default_spectrum_info": "CREATE TABLE `default_spectrum_info` "
+                                          "(`spectrum_handle` " + spectrum_handle +
+                                           "`spectrum_display_name` " + name_specs +
+                                           "`spexodisks_handle` " + name_specs +
+                                           "`spectrum_set_type` VARCHAR(20), " +
+                                           "`spectrum_observation_date` DATETIME, " +
+                                           "`spectrum_pi` VARCHAR(50), " +
+                                           "`spectrum_reference` " + param_ref +
+                                           "`spectrum_downloadable` TINYINT, " +
+                                           "`spectrum_data_reduction_by` VARCHAR(50), " +
+                                           "`spectrum_aor_key` INT, " +
+                                           "`spectrum_flux_is_calibrated` TINYINT, " +
+                                           "`spectrum_ref_frame` VARCHAR(20), " +
+                                           "`spectrum_min_wavelength_um` DOUBLE, " +
+                                           "`spectrum_max_wavelength_um` DOUBLE," +
+                                           "`spectrum_resolution_um` DOUBLE, " +
+                                           "`spectrum_output_filename` " + output_filename +
+                                           "PRIMARY KEY (`spectrum_handle`)" +
+                                           ") " +
+                                           "ENGINE=InnoDB;",
                  "flux_calibration": "CREATE TABLE `flux_calibration` " +
                                      "(`index_flux_cal` int(11) NOT NULL AUTO_INCREMENT, " +
                                      "`spectrum_handle` " + spectrum_handle +
@@ -104,51 +168,8 @@ create_tables = {'stars': "CREATE TABLE `stars` (`spexodisks_handle` " + name_sp
                                       "PRIMARY KEY (`index_flux_cal`)" +
                                       ") " +
                                      "ENGINE=InnoDB;",
-                 "CO": "CREATE TABLE `CO` (`index_CO` int(11) NOT NULL AUTO_INCREMENT, " +
-                                          "`wavelength_um` " + float_param +
-                                          "`isotopologue` VARCHAR(20), " +
-                                          "`upper_level` VARCHAR(30), " +
-                                          "`lower_level` VARCHAR(30), " +
-                                          "`transition` VARCHAR(30), " +
-                                          "`einstein_A` " + float_param +
-                                          "`upper_level_energy` " + float_param +
-                                          "`lower_level_energy` " + float_param +
-                                          "`g_statistical_weight_upper_level` " + float_param +
-                                          "`g_statistical_weight_lower_level` " + float_param +
-                                          "`upper_vibrational` INT(2), " +
-                                          "`upper_rotational` INT(2), " +
-                                          "`branch` VARCHAR(1), " +
-                                          "`lower_vibrational` INT(2), " +
-                                          "`lower_rotational` INT(2), " +
-                                           "PRIMARY KEY (`index_CO`)" +
-                                          ") " +
-                                         "ENGINE=InnoDB;",
-                 "H2O": "CREATE TABLE `H2O` (`index_H2O` int(11) NOT NULL AUTO_INCREMENT, " +
-                                            "`wavelength_um` " + float_param +
-                                            "`isotopologue` VARCHAR(20), " +
-                                            "`upper_level` VARCHAR(30), " +
-                                            "`lower_level` VARCHAR(30), " +
-                                            "`transition` VARCHAR(65), " +
-                                            "`einstein_A` " + float_param +
-                                            "`upper_level_energy` " + float_param +
-                                            "`lower_level_energy` " + float_param +
-                                            "`g_statistical_weight_upper_level` " + float_param +
-                                            "`g_statistical_weight_lower_level` " + float_param +
-                                            "`upper_vibrational1` INT(2), " +
-                                            "`upper_vibrational2` INT(2), " +
-                                            "`upper_vibrational3` INT(2), " +
-                                            "`upper_rotational` INT(2), " +
-                                            "`upper_ka` INT(2), " +
-                                            "`upper_kc` INT(2), " +
-                                            "`lower_vibrational1` INT(2), " +
-                                            "`lower_vibrational2` INT(2), " +
-                                            "`lower_vibrational3` INT(2), " +
-                                            "`lower_rotational` INT(2), " +
-                                            "`lower_ka` INT(2), " +
-                                            "`lower_kc` INT(2), " +
-                                             "PRIMARY KEY (`index_H2O`)" +
-                                            ") " +
-                                           "ENGINE=InnoDB;",
+                 "CO": "CREATE TABLE `CO` " + co_table_header,
+                 "H2O": "CREATE TABLE `H2O` " + h20_table_header,
                  "line_fluxes_CO": "CREATE TABLE `line_fluxes_CO` " +
                                    "(`index_CO` int(11) NOT NULL AUTO_INCREMENT, " +
                                     "`flux` " + float_param +
@@ -183,6 +204,17 @@ create_tables = {'stars': "CREATE TABLE `stars` (`spexodisks_handle` " + name_sp
                                           "PRIMARY KEY (`stack_line_handle`)" +
                                           ") " +
                                          "ENGINE=InnoDB;",
+                 "available_isotopologues": "CREATE TABLE `available_isotopologues` " +
+                                            "(`name` VARCHAR(20) NOT NULL, " +
+                                            "`label` VARCHAR(100) NOT NULL, " +
+                                            "`molecule` VARCHAR(20) NOT NULL, " +
+                                            "`mol_label` VARCHAR(100) NOT NULL, " +
+                                            "`color` VARCHAR(20) NOT NULL, " +
+                                            "`dash` VARCHAR(20) NOT NULL, " +
+                                            "`min_wavelength_um` " + float_param +
+                                            "`max_wavelength_um` " + float_param +
+                                            "`total_lines` INT(6) NOT NULL, " +
+                                            "PRIMARY KEY (`name`) ) ENGINE=InnoDB;",
                  }
 
 dynamically_named_tables = {"spectrum": "(`wavelength_um` " + float_param +
@@ -198,16 +230,28 @@ dynamically_named_tables = {"spectrum": "(`wavelength_um` " + float_param +
                                                  "PRIMARY KEY (`velocity_kmps`)" +
                                                  ") " +
                                                  "ENGINE=InnoDB;",
-                            }
+                            "co": co_table_header,
+                            'h2o': h20_table_header}
 
 
 def make_insert_columns_str(table_name, columns, database):
     insert_str = F"INSERT INTO {database}.{table_name}("
     columns_str = ""
     for column_name in columns:
-        columns_str += F"{column_name}, "
+        columns_str += F"`{column_name}`, "
     insert_str += columns_str[:-2] + ") VALUES"
     return insert_str
+
+
+def make_insert_many_columns_str(table_name, columns, database=None):
+    insert_str = make_insert_columns_str(table_name=table_name, columns=columns, database=database) + "("
+
+    for i in range(len(columns)):
+        if i == 0:
+            insert_str += "%s"
+        else:
+            insert_str += ", %s"
+    return insert_str + ")"
 
 
 def make_insert_values_str(values):
@@ -243,7 +287,10 @@ def insert_into_table_str(table_name, data, database=None):
 
 def generate_sql_config_file(user_name, password):
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    config_file_name = os.path.join(dir_path, 'new_configs', 'sql_config.py')
+    new_configs_dir = os.path.join(dir_path, 'new_configs')
+    if not os.path.isdir(new_configs_dir):
+        os.mkdir(new_configs_dir)
+    config_file_name = os.path.join(new_configs_dir, 'sql_config.py')
     with open(config_file_name, 'w') as f:
         f.write(F"""sql_host = "{sql_host}"\n""")
         f.write(F"""sql_port = "{sql_port}"\n""")
@@ -325,6 +372,20 @@ class OutputSQL:
         self.connection.commit()
         print(F"Successfully granted the Database Administrator (DBA) role to {user_name} for host {self.host}")
 
+    def make_new_server_user(self, user_name, password=None):
+        self.new_user(user_name=user_name, password=password)
+        if self.host == "localhost":
+            self.cursor.execute(F"""GRANT ALL PRIVILEGES ON *.* TO '{user_name}';""")
+        else:
+            aws_grants = "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, PROCESS, REFERENCES, INDEX, " + \
+                         "ALTER, SHOW DATABASES, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, " +\
+                         "REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, " + \
+                         F"EVENT, TRIGGER ON *.* TO '{user_name}';"
+            self.cursor.execute(aws_grants)
+        self.cursor.execute(F"""FLUSH PRIVILEGES;""")
+        self.connection.commit()
+        print(F"Successfully granted the Server role to {user_name} for host {self.host}")
+
     def drop_if_exists(self, table_name, database=None, run_silent=False):
         if self.verbose and not run_silent:
             print("    Dropping (deleting if the table exists) the Table:", table_name)
@@ -344,6 +405,100 @@ class OutputSQL:
             table_str = create_tables[table_name]
         else:
             table_str = "CREATE TABLE `" + table_name + "` " + dynamically_named_tables[dynamic_type]
+        self.cursor.execute(table_str)
+
+    def create_stars_table(self, max_summary_char_len=1000, database=None):
+        table_name = 'stars'
+        if database is None:
+            database = sql_database
+        self.open_if_closed()
+        self.drop_if_exists(table_name=table_name, database=database)
+        if self.verbose:
+            print(f"  Creating the SQL Table: '{table_name}' in the database: {database}")
+        table_str = f"CREATE TABLE `stars` (`spexodisks_handle` {name_specs}" + \
+                    f"`pop_name` {name_specs}" + \
+                    f"`preferred_simbad_name` {name_specs}" + \
+                    f"`simbad_link` VARCHAR({max_star_name_size + 72}), " + \
+                    f"`ra_dec` VARCHAR({35}), " + \
+                    f"`ra_dec_ref` {param_ref}" + \
+                    f"`ra` DOUBLE, " + \
+                    f"`dec` DOUBLE, " + \
+                    f"`esa_sky` VARCHAR({200}), " + \
+                    f"`spectra_summary` VARCHAR({max_summary_char_len}) NOT NULL, " + \
+                    "PRIMARY KEY (`spexodisks_handle`)) ENGINE=InnoDB;"
+        self.cursor.execute(table_str)
+
+    def create_data_stats_table(self, inst_keys, database=None):
+        table_name = 'data_stats'
+        if database is None:
+            database = sql_database
+        self.open_if_closed()
+        self.drop_if_exists(table_name=table_name, database=database)
+        if self.verbose:
+            print(f"  Creating the SQL Table: '{table_name}' in the database: {database}")
+        self.cursor.execute("USE " + database + ";")
+        table_str = f"CREATE TABLE `{table_name}` (" + \
+                    f"`total_stars` INT NOT NULL, " + \
+                    f"`total_spectra` INT NOT NULL, " + \
+                    f"`all_instruments` VARCHAR({1000}) NOT NULL, " + \
+                    f"`all_instruments_names` VARCHAR({2000}) NOT NULL, "
+        for inst_name in sorted(inst_keys):
+            table_str += f"`{inst_name}_spectra` INT NOT NULL, "
+        table_str = table_str[:-2] + ") ENGINE=InnoDB;"
+        self.cursor.execute(table_str)
+
+    def create_stats_total_table(self, database=None):
+        table_name = 'stats_total'
+        if database is None:
+            database = sql_database
+        self.open_if_closed()
+        self.drop_if_exists(table_name=table_name, database=database)
+        if self.verbose:
+            print(f"  Creating the SQL Table: '{table_name}' in the database: {database}")
+        self.cursor.execute("USE " + database + ";")
+        table_str = f"CREATE TABLE `{table_name}` (" + \
+                    f"`total_stars` INT NOT NULL, " + \
+                    f"`total_spectra` INT NOT NULL " + \
+                    f") ENGINE=InnoDB;"
+        self.cursor.execute(table_str)
+
+    def create_stats_inst_table(self, database=None):
+        table_name = 'stats_instrument'
+        if database is None:
+            database = sql_database
+        self.open_if_closed()
+        self.drop_if_exists(table_name=table_name, database=database)
+        if self.verbose:
+            print(f"  Creating the SQL Table: '{table_name}' in the database: {database}")
+        self.cursor.execute("USE " + database + ";")
+        table_str = f"CREATE TABLE `{table_name}` (" + \
+                    f"`order_index` INT NOT NULL AUTO_INCREMENT, " + \
+                    f"`inst_handle` VARCHAR({100}) NOT NULL, " + \
+                    f"`inst_name` VARCHAR({100}) NOT NULL," + \
+                    f"`inst_name_short` VARCHAR({100}) NOT NULL," + \
+                    f"`spectra_count` INT NOT NULL, " + \
+                    "PRIMARY KEY (`order_index`)" + \
+                    ") ENGINE=InnoDB;"
+        self.cursor.execute(table_str)
+
+    def create_units_table(self, database=None):
+        table_name = 'available_params_and_units'
+        if database is None:
+            database = sql_database
+        self.open_if_closed()
+        self.drop_if_exists(table_name=table_name, database=database)
+        if self.verbose:
+            print(f"  Creating the SQL Table: '{table_name}' in the database: {database}")
+        self.cursor.execute("USE " + database + ";")
+        table_str = f"CREATE TABLE `{table_name}` (" + \
+                    f"`order_index` INT NOT NULL AUTO_INCREMENT, " + \
+                    f"`param_handle` VARCHAR({100}) NOT NULL, " + \
+                    f"`units` VARCHAR({20})," + \
+                    f"`short_label` VARCHAR({50})," + \
+                    f"`plot_axis_label` VARCHAR({50})," + \
+                    f"`for_display` TINYINT NOT NULL, " + \
+                    f"`decimals` TINYINT, " + \
+                    f"PRIMARY KEY (`order_index`)) ENGINE=InnoDB;"
         self.cursor.execute(table_str)
 
     def insert_into_table(self, table_name, data, database=None):
@@ -368,6 +523,13 @@ class OutputSQL:
         self.connection.commit()
         if self.verbose and not run_silent:
             print("    Table inserted")
+
+    def insert_spectrum_table(self, table_name, columns, data, database=None):
+        self.creat_table(table_name=table_name,  database=database, dynamic_type='spectrum',
+                         run_silent=True)
+        insert_str = make_insert_many_columns_str(table_name=table_name, columns=columns, database=database)
+        self.cursor.executemany(insert_str, data)
+        self.connection.commit()
 
     def creat_database(self, database):
         if self.verbose:
@@ -461,11 +623,11 @@ class OutputSQL:
         table_name = "handles"
         self.prep_table_ops(table=F"{table_name}", database=database)
         self.cursor.execute(F"""CREATE TABLE {database}.{table_name}
-                                    SELECT spexodisks.spectra.spectrum_handle, spexodisks.stars.spexodisks_handle,
-                                        spexodisks.stars.pop_name, spexodisks.stars.preferred_simbad_name
-                                    FROM spexodisks.stars 
-                                        LEFT OUTER JOIN spexodisks.spectra
-                                        ON spexodisks.stars.spexodisks_handle = spexodisks.spectra.spexodisks_handle;""")
+                                    SELECT {database}.spectra.spectrum_handle, {database}.stars.spexodisks_handle,
+                                        {database}.stars.pop_name, {database}.stars.preferred_simbad_name
+                                    FROM {database}.stars 
+                                        LEFT OUTER JOIN {database}.spectra
+                                        ON {database}.stars.spexodisks_handle = {database}.spectra.spexodisks_handle;""")
         self.cursor.execute(F"""ALTER TABLE {database}.{table_name};""")
         self.connection.commit()
 
@@ -476,13 +638,21 @@ class OutputSQL:
 
         self.prep_table_ops(table=table_name, database=database)
         create_str = F"CREATE TABLE `{table_name}` (`spexodisks_handle` " + name_specs + "`pop_name` " + name_specs + \
-                     "`preferred_simbad_name` " + name_specs
+                     "`preferred_simbad_name` " + name_specs + \
+                     f"`simbad_link` VARCHAR({max_star_name_size + 72}), " + \
+                     f"`ra_dec` VARCHAR({35}), " + \
+                     f"`ra` VARCHAR({18}), " + \
+                     f"`dec` VARCHAR({18}), " + \
+                     f"`esa_sky` VARCHAR({200}), " + \
+                     f"`has_spectra` TINYINT NOT NULL, "
         all_column_names = ['spexodisks_handle', 'pop_name', 'preferred_simbad_name']
         for param in float_params:
             column_names = [F"{param}_value", F"{param}_err_low", F"{param}_err_high", F"{param}_ref"]
             all_column_names.extend(column_names)
             for column_name, specs in zip(column_names, float_specs):
                 create_str += F"`{column_name}` {specs}"
+                if column_name in {'is_jwst_target_value', 'is_dsharp_target_value'}:
+                    create_str = create_str[:-2] + ' NULL DEFAULT 0, '
         for a_str_param in str_params:
             str_column_names = [F"{a_str_param}_value", F"{a_str_param}_err_low",
                                 F"{a_str_param}_err_high", F"{a_str_param}_ref"]
@@ -508,13 +678,14 @@ class OutputSQL:
                 self.connection.commit()
             print(F"Tables updated in {target}\n   {source_tables}")
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
 
 if __name__ == "__main__":
-    output_sql = OutputSQL()
-    try:
-        pass
+    with OutputSQL() as output_sql:
         # output_sql.update_schemas()
-    except:
-        output_sql.close()
-        raise
-    output_sql.close()
+        output_sql.make_new_server_user('hussain')
