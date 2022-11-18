@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 import sqlalchemy as sa
-from mypysql.sql_config import sql_host, sql_port, sql_database, sql_user,  sql_password
+
+from mypysql.get_login import sql_host, sql_port, sql_database, sql_user,  sql_password
 
 
 uri_base = f"mysql+pymysql://{sql_user}:{sql_password}@{sql_host}:{sql_port}/"

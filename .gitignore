@@ -160,5 +160,5 @@ cython_debug/
 .idea/
 
 # Custom rules
-mypysql/*sql_config.py
 *sql_config.py
+mypysql/*sql_config.py
