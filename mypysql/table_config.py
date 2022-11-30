@@ -39,9 +39,7 @@ create_tables = {"object_params_float": "CREATE TABLE `object_params_float` "
                                                    "ENGINE=InnoDB;"}
 
 dynamically_named_tables = {"spectrum": "(`wavelength_um` " + float_param +
-                                         "`velocity_kmps` " + float_param +
-                                         "`flux` " + float_param_error +
-                                         "`flux_error` " + float_param_error +
-                                          "PRIMARY KEY (`wavelength_um`)" +
-                                         ") " +
-                                        "ENGINE=InnoDB;"}
+                            "`flux` " + float_param_error +
+                            "`flux_error` " + float_param_error +
+                            "PRIMARY KEY (`wavelength_um`)" +
+                            ") ENGINE=InnoDB;"}
