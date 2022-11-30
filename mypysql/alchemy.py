@@ -19,17 +19,15 @@ null_val = np.nan
 
 def format_spectrum(single_spectrum):
     if single_spectrum.flux_error is None:
-        for wavelength_um, velocity_kmps, flux \
-                in zip(single_spectrum.wavelength_um, single_spectrum.velocity_kmps, single_spectrum.flux):
+        for wavelength_um, flux in zip(single_spectrum.wavelength_um, single_spectrum.flux):
             if is_good_num(flux):
-                yield wavelength_um, velocity_kmps, flux, null_val
+                yield wavelength_um, flux, null_val
             else:
-                yield wavelength_um, velocity_kmps, null_val, null_val
+                yield wavelength_um, null_val, null_val
     else:
-        for wavelength_um, velocity_kmps, flux, flux_error \
-                in zip(single_spectrum.wavelength_um, single_spectrum.velocity_kmps,
-                       single_spectrum.flux, single_spectrum.flux_error):
-            single_row_values = [wavelength_um, velocity_kmps]
+        for wavelength_um, flux, flux_error \
+                in zip(single_spectrum.wavelength_um, single_spectrum.flux, single_spectrum.flux_error):
+            single_row_values = [wavelength_um]
             if is_good_num(flux):
                 single_row_values.append(flux)
             else:
@@ -53,8 +51,7 @@ class UploadSQL:
 
     def upload_spectra(self, single_spectrum, schema=sql_database, table_name=None):
         structured_array = np.array(list(format_spectrum(single_spectrum)),
-                                    dtype=[('wavelength_um', '<f8'), ('velocity_kmps', '<f8'),
-                                           ('flux', '<f8'), ('flux_error', '<f8')])
+                                    dtype=[('wavelength_um', '<f8'), ('flux', '<f8'), ('flux_error', '<f8')])
         df = pd.DataFrame(structured_array)
         if table_name is None:
             table_name = single_spectrum.spectrum_handle

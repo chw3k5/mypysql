@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 
 setup(name='mypysql',
-      version='0.1.1',
+      version='0.1.2',
       description='Load data to a MySQL database',
       author='Caleb Wheeler',
       author_email='chw3k5@gmail.com',
