@@ -32,22 +32,30 @@ def remove_bad_nums(wavelength_um: List[float], flux: List[float], flux_error: O
             yield wavelength_um, flux, flux_error
 
 
+def singleton_mask(wavelength_um_step: np.array,
+                   bandwidth_for_null_um: float = bandwidth_fraction_for_null_default):
+    left_side_steps = np.concatenate((np.array([0.0]), wavelength_um_step), axis=0)
+    right_side_steps = np.concatenate((wavelength_um_step, np.array([0.0])), axis=0)
+    return (left_side_steps < bandwidth_for_null_um) & (right_side_steps < bandwidth_for_null_um)
+
+
 def format_spectrum(wavelength_um: List[float], flux: List[float], flux_error: Optional[List[float]] = None,
                     bandwidth_fraction_for_null: float = bandwidth_fraction_for_null_default):
     # replacement here to save memory in the function call
     wavelength_um, flux, flux_error = zip(*remove_bad_nums(wavelength_um, flux, flux_error))
     wavelength_um = np.array(wavelength_um)
-    flux = np.array(flux)
-    flux_error = np.array(flux_error)
-    wavelength_um_min = np.min(wavelength_um)
-    wavelength_um_max = np.max(wavelength_um)
-    bandwidth = wavelength_um_max - wavelength_um_min
-    bandwidth_for_null = bandwidth * bandwidth_fraction_for_null
-    wavelength_um_step = wavelength_um[1:] - wavelength_um[:-1]
-    # for large steps in wavelength, insert a null value to break up the spectrum into segments of contiguous data
+    spectrum_bandwidth_um = max(wavelength_um) - min(wavelength_um)
+    bandwidth_for_null_um = spectrum_bandwidth_um * bandwidth_fraction_for_null
+    # remove singletons, points isolated in wavelength from both neighbors by more than bandwidth_for_null_um
+    wavelength_um_step = np.array(wavelength_um[1:] - wavelength_um[:-1])
+    true_is_non_singleton = singleton_mask(wavelength_um_step, bandwidth_for_null_um)
+    wavelength_um = wavelength_um[true_is_non_singleton]
+    flux = np.array(flux)[true_is_non_singleton]
+    flux_error = np.array(flux_error)[true_is_non_singleton]
+    # for large steps in wavelength, (re)insert a null value to break up the spectrum into segments of contiguous data
     insert_count = 0
     for i, wavelength_um_step in enumerate(wavelength_um_step):
-        if wavelength_um_step > bandwidth_for_null:
+        if wavelength_um_step > bandwidth_for_null_um:
             insert_count += 1
             wavelength_um_null = wavelength_um[i] + (wavelength_um_step / 2.0)
             insert_index = i + insert_count
@@ -55,7 +63,7 @@ def format_spectrum(wavelength_um: List[float], flux: List[float], flux_error: O
             flux = np.insert(flux, insert_index, null_val)
             flux_error = np.insert(flux_error, insert_index, null_val)
     return np.array(list(zip(wavelength_um, flux, flux_error)),
-                    dtype=[('wavelength_um', '<f8'), ('flux', '<f8'), ('flux_error', '<f8')])
+                    dtype=[('wavelength_um', np.float64), ('flux', np.float64), ('flux_error', np.float64)])
 
 
 class UploadSQL:
