@@ -10,5 +10,6 @@ python setup.py sdist --formats=gztar
 # pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple spexod==0.1.0
 # upload to PyPi
 python -m twine upload --repository pypi dist/*
+read -r -p "Upload finished Press any key to exit"
 # # PyPi installation
 # pip install mypysql
