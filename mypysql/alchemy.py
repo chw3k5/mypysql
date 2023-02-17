@@ -64,7 +64,7 @@ def format_spectrum(wavelength_um: List[float], flux: List[float], flux_error: O
             flux = np.insert(flux, insert_index, null_val)
             flux_error = np.insert(flux_error, insert_index, null_val)
     return np.array(list(zip(wavelength_um, flux, flux_error)),
-                    dtype=[('wavelength_um', np.float64), ('flux', np.float64), ('flux_error', np.float64)])
+                    dtype=[('wavelength_um', np.float64), ('flux', np.float32), ('flux_error', np.float32)])
 
 
 class UploadSQL:
